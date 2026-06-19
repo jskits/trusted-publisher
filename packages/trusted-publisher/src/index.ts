@@ -28,6 +28,7 @@ export { createNpmCliClient, parseTrustList, trustMatchesPlan } from "./npm.js";
 export { discoverPackages, readWorkspacePatterns } from "./packages.js";
 export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
 export { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
+export { resolvePublishTopology } from "./topology.js";
 export { discoverGitHubWorkflows } from "./workflows.js";
 
 export interface CliIo {
