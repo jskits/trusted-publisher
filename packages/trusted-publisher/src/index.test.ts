@@ -120,6 +120,47 @@ describe("trusted-publisher CLI", () => {
     expect(client.calls).toEqual(["getVersion", "packageExists:@scope/a", "listTrust:@scope/a"]);
   });
 
+  it("prints JSON dry-run reports without npm registry calls", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient();
+
+    await runCli({
+      argv: ["--dry-run", "--json"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    const report = JSON.parse(stdout.toString()) as { mode: string; schemaVersion: number };
+    expect(stderr.toString()).toBe("");
+    expect(report).toMatchObject({ mode: "dry-run", schemaVersion: 1 });
+    expect(client.calls).toEqual([]);
+  });
+
+  it("prints JSON audit reports and sets an actionable exit code", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient();
+
+    await runCli({
+      argv: ["--audit", "--json"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    const report = JSON.parse(stdout.toString()) as {
+      mode: string;
+      summary: { checkCreate: number };
+    };
+    expect(stderr.toString()).toBe("");
+    expect(report.mode).toBe("audit");
+    expect(report.summary.checkCreate).toBe(1);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+  });
+
   it("blocks unsupported npm CLI versions before registry checks", async () => {
     const stdout = new MemoryWritable();
     const stderr = new MemoryWritable();

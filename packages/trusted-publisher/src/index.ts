@@ -95,6 +95,8 @@ export function createProgram(
     .option("--registry <url>", "use a custom npm registry for npm package and trust checks")
     .option("--replace", "revoke differing trusted publisher records before recreating them")
     .option("--delay-ms <number>", "delay between npm trust mutations", parseInteger, 2000)
+    .option("--json", "write a machine-readable JSON report")
+    .option("--audit", "check npm trusted publisher state without applying changes")
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
     .option("--publish-only", "allow npm publish only")
     .option("--stage-only", "allow npm stage publish only")
@@ -114,37 +116,17 @@ export function createProgram(
         planningOptions.workflowFile = options.workflow;
       }
       const plans = buildTrustedPublisherPlans(discovery, planningOptions);
-      const publishablePackages = discovery.packages.filter((pkg) => pkg.publishable);
-      const skippedPackages = discovery.packages.filter((pkg) => !pkg.publishable);
 
-      io.stdout.write(`${pc.bold("trusted-publisher")} plan\n`);
-      io.stdout.write(`Repository root: ${discovery.repository.rootDir}\n`);
-      io.stdout.write(
-        `GitHub repository: ${options.repo ?? discovery.repository.githubRepository ?? "not detected"}\n`,
-      );
-      io.stdout.write(`Publishable packages: ${publishablePackages.length}\n`);
-      io.stdout.write(`Skipped packages: ${skippedPackages.length}\n`);
-      io.stdout.write(`GitHub workflows: ${discovery.workflows.length}\n`);
-
-      for (const plan of plans) {
-        const name = plan.package.name ?? plan.package.relativePath;
-        io.stdout.write(`\n${pc.bold(name)} [${plan.confidence}, score ${plan.score}]\n`);
-        if (plan.workflowFile) {
-          io.stdout.write(`  workflow: ${plan.workflowFile}\n`);
-        }
-        if (plan.command) {
-          io.stdout.write(`  command: ${plan.command}\n`);
-        }
-        for (const explanation of plan.explain) {
-          io.stdout.write(`  explain: ${explanation}\n`);
-        }
-        for (const reason of plan.reasons) {
-          io.stdout.write(`  reason: ${reason}\n`);
-        }
+      if (!options.json) {
+        printPlanSummary(discovery, plans, options, io);
       }
 
       if (options.dryRun) {
-        io.stdout.write("\nDry run: no npm changes will be made.\n");
+        if (options.json) {
+          printJsonReport({ discovery, mode: "dry-run", plans }, io);
+        } else {
+          io.stdout.write("\nDry run: no npm changes will be made.\n");
+        }
         return;
       }
 
@@ -170,15 +152,36 @@ export function createProgram(
       }
 
       const checkedPlans = await checkTrustedPublisherPlans(plans, client, applyOptions);
-      printNpmCheckSummary(checkedPlans, io);
+      if (options.audit) {
+        if (options.json) {
+          printJsonReport({ checkedPlans, discovery, mode: "audit", plans }, io);
+        } else {
+          printNpmCheckSummary(checkedPlans, io);
+        }
+        process.exitCode = determineAuditExitCode(checkedPlans);
+        return;
+      }
+
+      if (!options.json) {
+        printNpmCheckSummary(checkedPlans, io);
+      }
 
       const mutableCount = checkedPlans.filter((checkedPlan) => willApply(checkedPlan)).length;
       if (mutableCount === 0) {
-        io.stdout.write("\nNo high-confidence npm changes to apply.\n");
+        if (options.json) {
+          printJsonReport({ checkedPlans, discovery, mode: "apply", plans, results: [] }, io);
+        } else {
+          io.stdout.write("\nNo high-confidence npm changes to apply.\n");
+        }
         return;
       }
 
       if (!shouldApply(options, env)) {
+        if (options.json) {
+          printJsonReport({ checkedPlans, discovery, mode: "plan", plans }, io);
+          return;
+        }
+
         const confirmed = await confirmApply(mutableCount, io);
         if (!confirmed) {
           io.stdout.write("\nNo npm changes made.\n");
@@ -187,16 +190,22 @@ export function createProgram(
       }
 
       const results = await applyCheckedTrustedPublisherPlans(checkedPlans, client, applyOptions);
-      printApplySummary(results, io);
+      if (options.json) {
+        printJsonReport({ checkedPlans, discovery, mode: "apply", plans, results }, io);
+      } else {
+        printApplySummary(results, io);
+      }
     });
 
   return program;
 }
 
 interface CliOptions {
+  readonly audit?: boolean;
   readonly both?: boolean;
   readonly delayMs: number;
   readonly dryRun?: boolean;
+  readonly json?: boolean;
   readonly publishOnly?: boolean;
   readonly registry?: string;
   readonly replace?: boolean;
@@ -204,6 +213,42 @@ interface CliOptions {
   readonly stageOnly?: boolean;
   readonly workflow?: string;
   readonly yes?: boolean;
+}
+
+function printPlanSummary(
+  discovery: WorkspaceDiscovery,
+  plans: ReturnType<typeof buildTrustedPublisherPlans>,
+  options: CliOptions,
+  io: CliIo,
+): void {
+  const publishablePackages = discovery.packages.filter((pkg) => pkg.publishable);
+  const skippedPackages = discovery.packages.filter((pkg) => !pkg.publishable);
+
+  io.stdout.write(`${pc.bold("trusted-publisher")} plan\n`);
+  io.stdout.write(`Repository root: ${discovery.repository.rootDir}\n`);
+  io.stdout.write(
+    `GitHub repository: ${options.repo ?? discovery.repository.githubRepository ?? "not detected"}\n`,
+  );
+  io.stdout.write(`Publishable packages: ${publishablePackages.length}\n`);
+  io.stdout.write(`Skipped packages: ${skippedPackages.length}\n`);
+  io.stdout.write(`GitHub workflows: ${discovery.workflows.length}\n`);
+
+  for (const plan of plans) {
+    const name = plan.package.name ?? plan.package.relativePath;
+    io.stdout.write(`\n${pc.bold(name)} [${plan.confidence}, score ${plan.score}]\n`);
+    if (plan.workflowFile) {
+      io.stdout.write(`  workflow: ${plan.workflowFile}\n`);
+    }
+    if (plan.command) {
+      io.stdout.write(`  command: ${plan.command}\n`);
+    }
+    for (const explanation of plan.explain) {
+      io.stdout.write(`  explain: ${explanation}\n`);
+    }
+    for (const reason of plan.reasons) {
+      io.stdout.write(`  reason: ${reason}\n`);
+    }
+  }
 }
 
 function resolvePermissionMode(options: CliOptions): PermissionMode {
@@ -264,6 +309,93 @@ function printNpmCheckSummary(checkedPlans: readonly CheckedPlan[], io: CliIo): 
       }
     }
   }
+}
+
+function printJsonReport(
+  input: {
+    readonly checkedPlans?: readonly CheckedPlan[];
+    readonly discovery: WorkspaceDiscovery;
+    readonly mode: "apply" | "audit" | "dry-run" | "plan";
+    readonly plans: ReturnType<typeof buildTrustedPublisherPlans>;
+    readonly results?: readonly ApplyResult[];
+  },
+  io: CliIo,
+): void {
+  io.stdout.write(
+    `${JSON.stringify(
+      {
+        checkedPlans: input.checkedPlans ?? [],
+        discovery: input.discovery,
+        mode: input.mode,
+        plans: input.plans,
+        results: input.results ?? [],
+        schemaVersion: 1,
+        summary: createReportSummary(input.plans, input.checkedPlans, input.results),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+function createReportSummary(
+  plans: ReturnType<typeof buildTrustedPublisherPlans>,
+  checkedPlans: readonly CheckedPlan[] | undefined,
+  results: readonly ApplyResult[] | undefined,
+): Record<string, number> {
+  const summary: Record<string, number> = {
+    applyBlocked: 0,
+    applyCreated: 0,
+    applyFailed: 0,
+    applyReplaced: 0,
+    applySkipped: 0,
+    checkBlocked: 0,
+    checkCreate: 0,
+    checkReplace: 0,
+    checkSkip: 0,
+    highConfidence: plans.filter((plan) => plan.confidence === "high").length,
+    lowConfidence: plans.filter((plan) => plan.confidence === "low").length,
+    mediumConfidence: plans.filter((plan) => plan.confidence === "medium").length,
+    packages: plans.length,
+  };
+
+  for (const checkedPlan of checkedPlans ?? []) {
+    summary[`check${capitalize(checkedPlan.action)}`] =
+      (summary[`check${capitalize(checkedPlan.action)}`] ?? 0) + 1;
+  }
+
+  for (const result of results ?? []) {
+    summary[`apply${capitalize(result.status)}`] =
+      (summary[`apply${capitalize(result.status)}`] ?? 0) + 1;
+  }
+
+  return summary;
+}
+
+function determineAuditExitCode(checkedPlans: readonly CheckedPlan[]): number {
+  if (
+    checkedPlans.some(
+      (checkedPlan) =>
+        checkedPlan.action === "blocked" ||
+        (checkedPlan.action === "skip" && !checkedPlan.matchingTrust),
+    )
+  ) {
+    return 2;
+  }
+
+  if (
+    checkedPlans.some(
+      (checkedPlan) => checkedPlan.action === "create" || checkedPlan.action === "replace",
+    )
+  ) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
 
 function formatPackageExists(checkedPlan: CheckedPlan): string {
