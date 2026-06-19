@@ -62,6 +62,35 @@ describe("trusted publisher apply flow", () => {
     ]);
   });
 
+  it("checks packages serially so npm cannot launch concurrent authentication flows", async () => {
+    const client = createClient();
+
+    await checkTrustedPublisherPlans(
+      [
+        createPlan(),
+        createPlan({
+          package: {
+            directory: "/repo/packages/b",
+            name: "@scope/b",
+            private: false,
+            publishable: true,
+            relativePath: "packages/b",
+            skipReasons: [],
+            version: "1.0.0",
+          },
+        }),
+      ],
+      client,
+    );
+
+    expect(client.calls).toEqual([
+      "packageExists:@scope/a",
+      "listTrust:@scope/a",
+      "packageExists:@scope/b",
+      "listTrust:@scope/b",
+    ]);
+  });
+
   it("revokes differing publishers before recreating with --replace", async () => {
     const client = createClient({
       trusts: [

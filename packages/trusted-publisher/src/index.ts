@@ -151,7 +151,9 @@ export function createProgram(
         if (options.workflow) {
           planningOptions.workflowFile = options.workflow;
         }
-        const clientOptions: { registry?: string } = {};
+        const clientOptions: { interactiveAuth: boolean; registry?: string } = {
+          interactiveAuth: !options.json,
+        };
         if (options.registry) {
           clientOptions.registry = options.registry;
         }
@@ -439,8 +441,8 @@ const defaultServices: CliServices = {
   discoverWorkspace,
 };
 
-function shouldApply(options: CliOptions, env: Record<string, string | undefined>): boolean {
-  return Boolean(options.yes) || env.npm_config_yes === "true";
+function shouldApply(options: CliOptions, _env: Record<string, string | undefined>): boolean {
+  return Boolean(options.yes);
 }
 
 function parseInteger(value: string): number {

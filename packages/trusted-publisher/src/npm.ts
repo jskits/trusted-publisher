@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +42,7 @@ export interface ExistingTrust {
 }
 
 export interface NpmClientOptions {
+  readonly interactiveAuth?: boolean;
   readonly registry?: string;
 }
 
@@ -82,7 +83,12 @@ export function createNpmCliClient(options: NpmClientOptions = {}): NpmClient {
         );
       }
 
-      await runNpm([...plan.trustArgs.slice(1), ...registryArgs(options.registry)]);
+      const packageName = plan.package.name ?? plan.package.relativePath;
+      await runTrustCommand(
+        [...plan.trustArgs.slice(1), ...registryArgs(options.registry)],
+        packageName,
+        options,
+      );
     },
 
     async getVersion() {
@@ -104,13 +110,9 @@ export function createNpmCliClient(options: NpmClientOptions = {}): NpmClient {
     },
 
     async listTrust(packageName) {
-      const { stdout } = await runNpm([
-        "trust",
-        "list",
-        packageName,
-        "--json",
-        ...registryArgs(options.registry),
-      ]);
+      const args = ["trust", "list", packageName, "--json", ...registryArgs(options.registry)];
+      const { stdout } = await runTrustCommand(args, packageName, options);
+
       return parseTrustList(stdout);
     },
 
@@ -127,14 +129,11 @@ export function createNpmCliClient(options: NpmClientOptions = {}): NpmClient {
     },
 
     async revokeTrust(packageName, trustId) {
-      await runNpm([
-        "trust",
-        "revoke",
+      await runTrustCommand(
+        ["trust", "revoke", packageName, "--id", trustId, ...registryArgs(options.registry)],
         packageName,
-        "--id",
-        trustId,
-        ...registryArgs(options.registry),
-      ]);
+        options,
+      );
     },
   };
 }
@@ -220,20 +219,39 @@ function extractTrustItems(value: unknown): unknown[] {
     }
   }
 
-  return [];
+  return isTrustItem(value) ? [value] : [];
+}
+
+function isTrustItem(value: Record<string, unknown>): boolean {
+  return [
+    "id",
+    "trustId",
+    "trust_id",
+    "type",
+    "provider",
+    "publisher",
+    "file",
+    "workflow",
+    "repository",
+    "repo",
+    "permissions",
+  ].some((key) => key in value);
 }
 
 function normalizeTrustItem(value: unknown): ExistingTrust {
   const record = isRecord(value) ? value : {};
   const claims = isRecord(record.claims) ? record.claims : {};
   const allowedActions = readStringArray(
-    record.allowedActions ?? record.allowed_actions ?? record.actions,
+    record.allowedActions ?? record.allowed_actions ?? record.actions ?? record.permissions,
   );
   const allowPublish =
-    readBoolean(record.allowPublish ?? record.allow_publish) ?? allowedActions.includes("publish");
+    readBoolean(record.allowPublish ?? record.allow_publish) ??
+    (allowedActions.includes("publish") || allowedActions.includes("createPackage"));
   const allowStagePublish =
     readBoolean(record.allowStagePublish ?? record.allow_stage_publish) ??
-    (allowedActions.includes("stage-publish") || allowedActions.includes("stage"));
+    (allowedActions.includes("stage-publish") ||
+      allowedActions.includes("stage") ||
+      allowedActions.includes("createStagedPackage"));
 
   return compactExistingTrust({
     allowPublish,
@@ -306,6 +324,83 @@ async function runNpm(args: readonly string[]): Promise<{ stdout: string }> {
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 10,
   });
+}
+
+async function runTrustCommand(
+  args: readonly string[],
+  packageName: string,
+  options: NpmClientOptions,
+): Promise<{ stdout: string }> {
+  try {
+    return await runNpm(args);
+  } catch (error) {
+    if (!isWebOtpError(error)) {
+      throw error;
+    }
+  }
+
+  if (options.interactiveAuth === false || !hasInteractiveTerminal()) {
+    throw trustAuthenticationError(packageName);
+  }
+
+  process.stderr.write(
+    "\nnpm trust requires browser authentication. " +
+      'Complete it in the browser and select "skip two-factor authentication for the next 5 minutes".\n\n',
+  );
+  await runNpmInteractively(["trust", "list", packageName, ...registryArgs(options.registry)]);
+
+  try {
+    return await runNpm(args);
+  } catch (error) {
+    if (isWebOtpError(error)) {
+      throw trustAuthenticationError(packageName, true);
+    }
+    throw error;
+  }
+}
+
+function runNpmInteractively(args: readonly string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("npm", [...args], { stdio: "inherit" });
+
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      const status = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
+      reject(new Error(`Interactive npm trust authentication failed with ${status}.`));
+    });
+  });
+}
+
+function hasInteractiveTerminal(): boolean {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
+
+function isWebOtpError(error: unknown): boolean {
+  const commandError = error as CommandError;
+  const output = [commandError.message, commandError.stderr, commandError.stdout]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+
+  return (
+    output.includes("EOTP") && output.includes("Open this URL in your browser to authenticate")
+  );
+}
+
+function trustAuthenticationError(packageName: string, retried = false): Error {
+  const retryDetail = retried
+    ? " The follow-up registry request was not covered by the five-minute authentication window."
+    : "";
+
+  return new Error(
+    `npm trust requires interactive browser authentication for ${packageName}.${retryDetail} ` +
+      `Run \`npm trust list ${packageName}\` in an interactive terminal, select the five-minute ` +
+      "two-factor authentication skip option, then rerun trusted-publisher.",
+  );
 }
 
 function registryArgs(registry: string | undefined): string[] {

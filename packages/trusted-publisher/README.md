@@ -35,8 +35,11 @@ For the full design see [docs/architecture.md](../../docs/architecture.md),
 # scan, check npm state, and ask before applying
 trusted-publisher
 
-# npx -y sets npm_config_yes=true, so high-confidence changes are applied
+# npx -y accepts npm's install prompt; trusted-publisher still asks before applying
 npx -y trusted-publisher
+
+# explicitly apply high-confidence changes without the trusted-publisher prompt
+npx -y trusted-publisher --yes
 
 # print planned npm trust commands without npm registry checks or changes
 trusted-publisher --dry-run
@@ -71,11 +74,11 @@ matrix expansion, permissions, and evidence) are documented in
 Every package gets a plan with a `score` (0–100), a `confidence` tier, and `explain`/`reasons`
 trails:
 
-| Confidence | Score | Auto-applied with `--yes` / `npx -y`? |
-| ---------- | ----- | ------------------------------------- |
-| `high`     | ≥ 85  | yes                                   |
-| `medium`   | 50–84 | no — printed with reasons             |
-| `low`      | < 50  | no — printed with reasons             |
+| Confidence | Score | Applied with explicit `--yes`? |
+| ---------- | ----- | ------------------------------ |
+| `high`     | ≥ 85  | yes                            |
+| `medium`   | 50–84 | no — printed with reasons      |
+| `low`      | < 50  | no — printed with reasons      |
 
 A `high` plan needs a publishable named package, a resolved GitHub repository, a selected workflow
 with a direct publish command, `id-token: write` present, an inferred permission, and no outstanding
@@ -112,6 +115,22 @@ trusted-publisher --repo owner/repo
 
 `--repo` does not clone or scan a remote repository; it only overrides the trusted publisher repo
 field.
+
+## npm authentication
+
+`npm trust` requires account-level two-factor authentication. Granular access tokens with
+`bypass_2fa` do not bypass this requirement. When npm returns a browser authentication challenge,
+`trusted-publisher` reruns the first trust check in the interactive terminal. Complete the browser
+flow and select the option to skip two-factor authentication for the next five minutes; the
+remaining package checks and mutations then use that window.
+
+Machine-readable `--json` mode cannot open an interactive authentication flow because stdout must
+remain valid JSON. Authenticate first in a terminal, then rerun the JSON command:
+
+```sh
+npm trust list @scope/package
+trusted-publisher --audit --json
+```
 
 ## Additional Modes
 
@@ -229,7 +248,8 @@ stdout.
 
 ## Safety model
 
-- `--yes` and `npx -y` apply only high-confidence plans.
+- Only an explicit trusted-publisher `--yes` skips the apply prompt. The outer `npx -y` flag only
+  accepts npm's package installation prompt.
 - Medium- and low-confidence plans are skipped with reasons.
 - Existing matching trusted publishers are skipped.
 - Existing differing trusted publishers are blocked unless `--replace` is set.

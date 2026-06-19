@@ -15,8 +15,11 @@ automates that discovery and bookkeeping for one package or hundreds — without
 ## Quick start
 
 ```sh
-# scan the current repository, check npm state, and apply only high-confidence changes
+# scan the current repository, check npm state, and ask before applying
 npx -y trusted-publisher
+
+# explicitly apply high-confidence changes without prompting
+npx -y trusted-publisher --yes
 
 # scan a public GitHub repository you have not checked out
 npx -y trusted-publisher --source https://github.com/owner/repo
@@ -66,8 +69,11 @@ The full pipeline is documented in [docs/architecture.md](docs/architecture.md).
 ## Common commands
 
 ```sh
-# local repository, high-confidence auto-apply
+# local repository, ask before applying
 npx -y trusted-publisher
+
+# local repository, high-confidence auto-apply
+npx -y trusted-publisher --yes
 
 # remote public GitHub repository
 npx -y trusted-publisher --source https://github.com/owner/repo

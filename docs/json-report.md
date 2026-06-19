@@ -34,7 +34,7 @@ trusted-publisher --json --yes        # full apply, machine-readable result
 | --------- | --------------------------------------------------------------------------------- |
 | `dry-run` | `--dry-run`; no npm registry calls were made                                      |
 | `audit`   | `--audit`; npm state was checked but nothing was applied (also sets an exit code) |
-| `plan`    | high-confidence changes exist but were **not** authorized (no `--yes`/`npx -y`)   |
+| `plan`    | high-confidence changes exist but were **not** authorized (no explicit `--yes`)   |
 | `apply`   | an apply was attempted (or there was nothing to apply)                            |
 
 ## `discovery`

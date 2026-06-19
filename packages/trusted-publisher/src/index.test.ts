@@ -65,7 +65,7 @@ describe("trusted-publisher CLI", () => {
     expect(stdout.toString()).toBe(`${version}\n`);
   });
 
-  it("applies when npm_config_yes is true", async () => {
+  it("does not treat the outer npx -y environment as apply approval", async () => {
     const stdout = new MemoryWritable();
     const stderr = new MemoryWritable();
     const client = createClient();
@@ -79,6 +79,23 @@ describe("trusted-publisher CLI", () => {
 
     expect(stderr.toString()).toBe("");
     expect(stdout.toString()).toContain("Npm registry check:");
+    expect(stdout.toString()).toContain("No interactive input detected.");
+    expect(client.calls).toEqual(["getVersion", "packageExists:@scope/a", "listTrust:@scope/a"]);
+  });
+
+  it("applies when --yes is explicitly passed to trusted-publisher", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient();
+
+    await runCli({
+      argv: ["--yes", "--delay-ms", "0"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    expect(stderr.toString()).toBe("");
     expect(stdout.toString()).toContain("Apply summary:");
     expect(client.calls).toEqual([
       "getVersion",

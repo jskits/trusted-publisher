@@ -74,7 +74,8 @@ and mutations only happen in the apply/claim steps once they are explicitly auth
 without touching the network or filesystem:
 
 - `io` — `stdin`, `stdout`, and `stderr` streams (the prompt path checks `stdin.isTTY`).
-- `env` — environment lookup, used to honor `npm_config_yes` (set by `npx -y`).
+- `env` — environment injection retained for embedded callers; apply authorization still requires
+  the CLI's explicit `--yes` option.
 - `services` — `createNpmClient`, `discoverWorkspace`, and `discoverSourceWorkspace`.
 
 The `NpmClient` interface in [`npm.ts`](../packages/trusted-publisher/src/npm.ts) is the seam for

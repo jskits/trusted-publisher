@@ -56,6 +56,29 @@ describe("npm trusted publisher parsing", () => {
     });
   });
 
+  it("normalizes npm 11 singleton output and trust permission names", () => {
+    const trusts = parseTrustList(
+      JSON.stringify({
+        file: "release.yml",
+        id: "trust-1",
+        permissions: ["createPackage", "createStagedPackage"],
+        repository: "owner/repo",
+        type: "github",
+      }),
+    );
+
+    expect(trusts).toHaveLength(1);
+    expect(trusts[0]).toMatchObject({
+      allowPublish: true,
+      allowStagePublish: true,
+      file: "release.yml",
+      id: "trust-1",
+      provider: "github",
+      repository: "owner/repo",
+    });
+    expect(trustMatchesPlan(trusts[0]!, createPlan({ allowStagePublish: true }, false))).toBe(true);
+  });
+
   it("normalizes npm search results for scoped packages", () => {
     expect(
       parseSearchPackageNames(
@@ -73,10 +96,10 @@ describe("npm trusted publisher parsing", () => {
 
 function createPlan(
   permissions: Partial<TrustedPublisherPlan["permissions"]> = {},
+  includeEnvironment = true,
 ): TrustedPublisherPlan {
-  return {
+  const plan: TrustedPublisherPlan = {
     confidence: "high",
-    environment: "npm",
     evidence: [],
     explain: [],
     package: {
@@ -110,4 +133,6 @@ function createPlan(
     ],
     workflowFile: "release.yml",
   };
+
+  return includeEnvironment ? { ...plan, environment: "npm" } : plan;
 }

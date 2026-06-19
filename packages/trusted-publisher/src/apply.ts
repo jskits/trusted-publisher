@@ -36,7 +36,15 @@ export async function checkTrustedPublisherPlans(
   client: NpmClient,
   options: CheckOptions = {},
 ): Promise<CheckedPlan[]> {
-  return Promise.all(plans.map((plan) => checkTrustedPublisherPlan(plan, client, options)));
+  const checkedPlans: CheckedPlan[] = [];
+
+  for (const plan of plans) {
+    // npm trust may require one interactive 2FA flow before opening its five-minute auth window.
+    // eslint-disable-next-line no-await-in-loop -- trust checks must not launch concurrent auth flows.
+    checkedPlans.push(await checkTrustedPublisherPlan(plan, client, options));
+  }
+
+  return checkedPlans;
 }
 
 export async function applyTrustedPublisherPlans(

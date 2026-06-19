@@ -90,11 +90,11 @@ After the additive signals, several caps are applied:
 
 ### Confidence tiers
 
-| Score | Confidence | Auto-applied with `--yes` / `npx -y`? |
-| ----- | ---------- | ------------------------------------- |
-| ≥ 85  | `high`     | yes                                   |
-| 50–84 | `medium`   | no — printed with reasons             |
-| < 50  | `low`      | no — printed with reasons             |
+| Score | Confidence | Applied with explicit `--yes`? |
+| ----- | ---------- | ------------------------------ |
+| ≥ 85  | `high`     | yes                            |
+| 50–84 | `medium`   | no — printed with reasons      |
+| < 50  | `low`      | no — printed with reasons      |
 
 In practice a `high` plan requires: a publishable, named package; a resolved GitHub repository; a
 selected workflow with a **direct** publish command; `id-token: write` present; an inferred
