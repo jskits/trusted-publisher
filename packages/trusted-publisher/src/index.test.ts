@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import type { WorkspaceDiscovery } from "./discovery.js";
@@ -158,6 +161,27 @@ describe("trusted-publisher CLI", () => {
     expect(report.mode).toBe("audit");
     expect(report.summary.checkCreate).toBe(1);
     expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+  });
+
+  it("writes markdown migration reports", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient();
+    const reportPath = join(mkdtempSync(join(tmpdir(), "trusted-publisher-report-")), "report.md");
+
+    await runCli({
+      argv: ["--audit", "--report", reportPath],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    const report = readFileSync(reportPath, "utf8");
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toContain(`Migration report written to ${reportPath}`);
+    expect(report).toContain("# trusted-publisher Migration Report");
+    expect(report).toContain("@scope/a");
     process.exitCode = undefined;
   });
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import {
   type CheckedPlan,
 } from "./apply.js";
 import { discoverWorkspace, type WorkspaceDiscovery } from "./discovery.js";
+import { generateMigrationReport, type MigrationReportInput } from "./migration-report.js";
 import { createNpmCliClient, type NpmClient, type NpmClientOptions } from "./npm.js";
 import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
 import { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
@@ -25,6 +26,7 @@ export {
 } from "./apply.js";
 export { discoverWorkspace } from "./discovery.js";
 export { discoverRepository, findRepoRoot, parseGitHubRepository } from "./git.js";
+export { generateMigrationReport } from "./migration-report.js";
 export { createNpmCliClient, parseTrustList, trustMatchesPlan } from "./npm.js";
 export { discoverPackages, readWorkspacePatterns } from "./packages.js";
 export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
@@ -97,6 +99,7 @@ export function createProgram(
     .option("--delay-ms <number>", "delay between npm trust mutations", parseInteger, 2000)
     .option("--json", "write a machine-readable JSON report")
     .option("--audit", "check npm trusted publisher state without applying changes")
+    .option("--report <path>", "write a markdown migration report to a path, or '-' for stdout")
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
     .option("--publish-only", "allow npm publish only")
     .option("--stage-only", "allow npm stage publish only")
@@ -116,12 +119,16 @@ export function createProgram(
         planningOptions.workflowFile = options.workflow;
       }
       const plans = buildTrustedPublisherPlans(discovery, planningOptions);
+      if (options.json && options.report === "-") {
+        throw new Error("--report - cannot be combined with --json because both write to stdout.");
+      }
 
       if (!options.json) {
         printPlanSummary(discovery, plans, options, io);
       }
 
       if (options.dryRun) {
+        writeMigrationReportIfRequested({ discovery, plans }, options, io);
         if (options.json) {
           printJsonReport({ discovery, mode: "dry-run", plans }, io);
         } else {
@@ -153,6 +160,7 @@ export function createProgram(
 
       const checkedPlans = await checkTrustedPublisherPlans(plans, client, applyOptions);
       if (options.audit) {
+        writeMigrationReportIfRequested({ checkedPlans, discovery, plans }, options, io);
         if (options.json) {
           printJsonReport({ checkedPlans, discovery, mode: "audit", plans }, io);
         } else {
@@ -168,6 +176,11 @@ export function createProgram(
 
       const mutableCount = checkedPlans.filter((checkedPlan) => willApply(checkedPlan)).length;
       if (mutableCount === 0) {
+        writeMigrationReportIfRequested(
+          { checkedPlans, discovery, plans, results: [] },
+          options,
+          io,
+        );
         if (options.json) {
           printJsonReport({ checkedPlans, discovery, mode: "apply", plans, results: [] }, io);
         } else {
@@ -178,6 +191,7 @@ export function createProgram(
 
       if (!shouldApply(options, env)) {
         if (options.json) {
+          writeMigrationReportIfRequested({ checkedPlans, discovery, plans }, options, io);
           printJsonReport({ checkedPlans, discovery, mode: "plan", plans }, io);
           return;
         }
@@ -185,11 +199,13 @@ export function createProgram(
         const confirmed = await confirmApply(mutableCount, io);
         if (!confirmed) {
           io.stdout.write("\nNo npm changes made.\n");
+          writeMigrationReportIfRequested({ checkedPlans, discovery, plans }, options, io);
           return;
         }
       }
 
       const results = await applyCheckedTrustedPublisherPlans(checkedPlans, client, applyOptions);
+      writeMigrationReportIfRequested({ checkedPlans, discovery, plans, results }, options, io);
       if (options.json) {
         printJsonReport({ checkedPlans, discovery, mode: "apply", plans, results }, io);
       } else {
@@ -208,6 +224,7 @@ interface CliOptions {
   readonly json?: boolean;
   readonly publishOnly?: boolean;
   readonly registry?: string;
+  readonly report?: string;
   readonly replace?: boolean;
   readonly repo?: string;
   readonly stageOnly?: boolean;
@@ -336,6 +353,27 @@ function printJsonReport(
       2,
     )}\n`,
   );
+}
+
+function writeMigrationReportIfRequested(
+  input: MigrationReportInput,
+  options: CliOptions,
+  io: CliIo,
+): void {
+  if (!options.report) {
+    return;
+  }
+
+  const report = generateMigrationReport(input);
+  if (options.report === "-") {
+    io.stdout.write(report);
+    return;
+  }
+
+  writeFileSync(options.report, report);
+  if (!options.json) {
+    io.stdout.write(`\nMigration report written to ${options.report}\n`);
+  }
 }
 
 function createReportSummary(
