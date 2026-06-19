@@ -1,0 +1,58 @@
+{
+  "name": "trusted-publisher-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Bulk configure npm trusted publishing for monorepos.",
+  "type": "module",
+  "scripts": {
+    "build": "turbo run build",
+    "check": "turbo run build typecheck test lint:package \"//#lint\" \"//#format:check\"",
+    "clean": "turbo run clean && rimraf node_modules",
+    "commit": "cz",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "prepare": "simple-git-hooks",
+    "release": "pnpm build && changeset publish",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch",
+    "typecheck": "turbo run typecheck",
+    "changeset": "changeset",
+    "changeset:version": "changeset version"
+  },
+  "devDependencies": {
+    "@changesets/cli": "catalog:",
+    "@commitlint/cli": "catalog:",
+    "@commitlint/config-conventional": "catalog:",
+    "@types/node": "catalog:",
+    "commitizen": "catalog:",
+    "cz-git": "catalog:",
+    "lint-staged": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "publint": "catalog:",
+    "rimraf": "catalog:",
+    "simple-git-hooks": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "simple-git-hooks": {
+    "commit-msg": "pnpm exec commitlint --edit \"$1\"",
+    "pre-commit": "pnpm exec lint-staged"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,mts,cts,json,jsonc,yml,yaml,md}": "oxfmt --write",
+    "*.{js,mjs,cjs,ts,mts,cts}": "oxlint"
+  },
+  "config": {
+    "commitizen": {
+      "path": "node_modules/cz-git"
+    }
+  },
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "packageManager": "pnpm@11.8.0"
+}
