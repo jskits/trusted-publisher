@@ -6,9 +6,12 @@ Bulk configure npm trusted publishing for GitHub monorepos.
 npx -y trusted-publisher
 ```
 
-`trusted-publisher` scans a GitHub repository, finds publishable npm workspace packages, detects
-the GitHub Actions workflow that publishes them, checks npm trusted publisher state, and applies
-only high-confidence changes.
+`trusted-publisher` scans a GitHub repository, finds publishable npm packages, detects the GitHub
+Actions workflow that publishes them, checks npm trusted publisher state, and applies only
+high-confidence changes.
+
+It is designed for ordinary packages and monorepos where npm's native `npm trust` command is the
+source of truth, but workspace discovery and workflow selection should be automated.
 
 ## Usage
 
@@ -21,6 +24,63 @@ npx -y trusted-publisher
 
 # print planned npm trust commands without npm registry checks or changes
 trusted-publisher --dry-run
+```
+
+## What It Detects
+
+Package discovery supports:
+
+- Single-package repositories with a root `package.json`.
+- npm and Yarn workspaces from `package.json#workspaces`.
+- pnpm workspaces from `pnpm-workspace.yaml`.
+- Lerna packages from `lerna.json#packages`.
+- Nx and Turbo conventional layouts under `apps/*`, `libs/*`, and `packages/*`.
+
+Publishing workflow analysis supports:
+
+- Direct `npm publish` and `npm stage publish`.
+- pnpm publish commands, including recursive and filtered publishes.
+- Yarn npm publish commands and workspace foreach publishes.
+- Changesets, semantic-release, Lerna publish, and Nx release publish.
+- Matrix jobs that publish one package per matrix value.
+- Reusable workflows, reported conservatively for manual review when the publish target is unclear.
+
+For each package, the planner selects the best publish workflow candidate, assigns a confidence
+score, and explains the evidence used for the decision.
+
+## Local Repository Flow
+
+Run the command from the repository you want to migrate:
+
+```sh
+cd /path/to/repo
+npx -y trusted-publisher
+```
+
+The local flow reads only repository files and npm registry state. It does not install dependencies,
+run builds, or execute release scripts. The apply phase calls npm's official command shape:
+
+```sh
+npm trust github "@scope/pkg" \
+  --repo "owner/repo" \
+  --file "release.yml" \
+  --allow-publish \
+  --yes
+```
+
+If the GitHub remote cannot be inferred correctly, override only the repository value passed to
+`npm trust`:
+
+```sh
+trusted-publisher --repo owner/repo
+```
+
+`--repo` does not clone or scan a remote repository; it only overrides the trusted publisher repo
+field.
+
+## Additional Modes
+
+```sh
 
 # scan a public GitHub repository without cloning it yourself
 trusted-publisher --source https://github.com/owner/repo --dry-run
@@ -44,6 +104,7 @@ trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
 - Medium- and low-confidence plans are skipped with reasons.
 - Existing matching trusted publishers are skipped.
 - Existing differing trusted publishers are blocked unless `--replace` is set.
+- Existing trusted publisher drift is reported field-by-field before replacement.
 - Mutations are serial and wait 2 seconds by default between npm trust changes.
 - `--source` clones a public GitHub repository into a temporary directory for scanning, then
   removes it before the process exits.
@@ -53,6 +114,7 @@ trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
   registry packages instead of local workspace packages.
 - Per-package npm failures are reported as `failed` in the final summary.
 - Private packages, restricted packages, missing package names, and non-npm registries are skipped.
+- Re-running is safe: already-matching packages are treated as no-ops.
 
 ## Options
 
