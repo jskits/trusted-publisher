@@ -24,6 +24,7 @@ import { generateMigrationReport, type MigrationReportInput } from "./migration-
 import { createNpmCliClient, type NpmClient, type NpmClientOptions } from "./npm.js";
 import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
 import { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
+import { normalizeNpmScope, withScopePackages } from "./scope.js";
 import { formatTrustFieldDiff } from "./trust-diff.js";
 
 export {
@@ -39,6 +40,7 @@ export { createNpmCliClient, parseTrustList, trustMatchesPlan } from "./npm.js";
 export { discoverPackages, readWorkspacePatterns } from "./packages.js";
 export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
 export { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
+export { createScopePackages, normalizeNpmScope, withScopePackages } from "./scope.js";
 export { resolvePublishTopology } from "./topology.js";
 export { compareTrustToPlan, formatTrustFieldDiff } from "./trust-diff.js";
 export { discoverGitHubWorkflows } from "./workflows.js";
@@ -109,13 +111,20 @@ export function createProgram(
     .option("--audit", "check npm trusted publisher state without applying changes")
     .option("--report <path>", "write a markdown migration report to a path, or '-' for stdout")
     .option("--claim", "publish placeholder packages for missing npm package names")
+    .option("--scope <scope>", "configure all public npm packages in a scope, such as @acme")
+    .option(
+      "--scope-limit <number>",
+      "maximum packages to load from npm scope search",
+      parseInteger,
+      250,
+    )
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
     .option("--publish-only", "allow npm publish only")
     .option("--stage-only", "allow npm stage publish only")
     .option("--both", "allow npm publish and npm stage publish")
     .action(async (options: CliOptions) => {
       const permissionMode = resolvePermissionMode(options);
-      const discovery = services.discoverWorkspace();
+      let discovery = services.discoverWorkspace();
       const planningOptions: {
         permissionMode: PermissionMode;
         repository?: string;
@@ -127,6 +136,19 @@ export function createProgram(
       if (options.workflow) {
         planningOptions.workflowFile = options.workflow;
       }
+      const clientOptions: { registry?: string } = {};
+      if (options.registry) {
+        clientOptions.registry = options.registry;
+      }
+
+      let client: NpmClient | undefined;
+      if (options.scope) {
+        const scope = normalizeNpmScope(options.scope);
+        client = services.createNpmClient(clientOptions);
+        const packageNames = await client.listScopePackages(scope, { limit: options.scopeLimit });
+        discovery = withScopePackages(discovery, packageNames, scope);
+      }
+
       const plans = buildTrustedPublisherPlans(discovery, planningOptions);
       if (options.json && options.report === "-") {
         throw new Error("--report - cannot be combined with --json because both write to stdout.");
@@ -150,11 +172,6 @@ export function createProgram(
       let claimResults: PackageClaimResult[] = [];
       let claimMutationDeferred = false;
 
-      const clientOptions: { registry?: string } = {};
-      if (options.registry) {
-        clientOptions.registry = options.registry;
-      }
-
       const applyOptions: { delayMs: number; replace?: boolean } = {
         delayMs: options.delayMs,
       };
@@ -162,7 +179,7 @@ export function createProgram(
         applyOptions.replace = true;
       }
 
-      const client = services.createNpmClient(clientOptions);
+      client ??= services.createNpmClient(clientOptions);
       if (!options.dryRun) {
         const prerequisiteIssues = checkRuntimePrerequisites({
           nodeVersion: process.versions.node,
@@ -331,6 +348,8 @@ interface CliOptions {
   readonly report?: string;
   readonly replace?: boolean;
   readonly repo?: string;
+  readonly scope?: string;
+  readonly scopeLimit: number;
   readonly stageOnly?: boolean;
   readonly workflow?: string;
   readonly yes?: boolean;

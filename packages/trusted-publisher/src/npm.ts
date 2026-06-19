@@ -12,6 +12,10 @@ export interface NpmClient {
   readonly claimPackage: (packageName: string, options?: NpmPackageClaimOptions) => Promise<void>;
   readonly createTrust: (plan: TrustedPublisherPlan) => Promise<void>;
   readonly getVersion: () => Promise<string>;
+  readonly listScopePackages: (
+    scope: string,
+    options?: NpmScopePackageOptions,
+  ) => Promise<string[]>;
   readonly listTrust: (packageName: string) => Promise<ExistingTrust[]>;
   readonly packageExists: (packageName: string) => Promise<boolean>;
   readonly revokeTrust: (packageName: string, trustId: string) => Promise<void>;
@@ -20,6 +24,10 @@ export interface NpmClient {
 export interface NpmPackageClaimOptions {
   readonly tag?: string;
   readonly version?: string;
+}
+
+export interface NpmScopePackageOptions {
+  readonly limit?: number;
 }
 
 export interface ExistingTrust {
@@ -82,6 +90,19 @@ export function createNpmCliClient(options: NpmClientOptions = {}): NpmClient {
       return stdout.trim();
     },
 
+    async listScopePackages(scope, scopeOptions = {}) {
+      const limit = scopeOptions.limit ?? 250;
+      const { stdout } = await runNpm([
+        "search",
+        `scope:${scope}`,
+        "--json",
+        "--searchlimit",
+        String(limit),
+        ...registryArgs(options.registry),
+      ]);
+      return parseSearchPackageNames(stdout, scope);
+    },
+
     async listTrust(packageName) {
       const { stdout } = await runNpm([
         "trust",
@@ -118,6 +139,19 @@ export function createNpmCliClient(options: NpmClientOptions = {}): NpmClient {
   };
 }
 
+export function parseSearchPackageNames(stdout: string, scope?: string): string[] {
+  if (!stdout.trim()) {
+    return [];
+  }
+
+  const names = extractSearchItems(JSON.parse(stdout))
+    .map(readSearchPackageName)
+    .filter((name): name is string => Boolean(name));
+  const filteredNames = scope ? names.filter((name) => name.startsWith(`${scope}/`)) : names;
+
+  return [...new Set(filteredNames)].toSorted((left, right) => left.localeCompare(right));
+}
+
 export function parseTrustList(stdout: string): ExistingTrust[] {
   if (!stdout.trim()) {
     return [];
@@ -148,6 +182,26 @@ function permissionsMatch(trust: ExistingTrust, permissions: TrustPermissions): 
 
 function normalizeTrustList(value: unknown): ExistingTrust[] {
   return extractTrustItems(value).map(normalizeTrustItem);
+}
+
+function extractSearchItems(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const objects = value.objects;
+  return Array.isArray(objects) ? objects : [];
+}
+
+function readSearchPackageName(value: unknown): string | undefined {
+  const record = isRecord(value) ? value : {};
+  const packageRecord = isRecord(record.package) ? record.package : {};
+
+  return readString(record.name ?? packageRecord.name);
 }
 
 function extractTrustItems(value: unknown): unknown[] {

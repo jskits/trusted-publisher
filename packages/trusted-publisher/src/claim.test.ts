@@ -84,6 +84,10 @@ function createClient(
       calls.push(`listTrust:${packageName}`);
       return [...(options.trusts ?? [])];
     },
+    async listScopePackages(scope) {
+      calls.push(`listScopePackages:${scope}`);
+      return [];
+    },
     async packageExists(packageName) {
       calls.push(`packageExists:${packageName}`);
       return options.packageExists ?? true;

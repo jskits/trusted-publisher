@@ -30,6 +30,9 @@ trusted-publisher --replace --yes
 
 # claim unpublished package names with placeholder packages, then configure trust
 trusted-publisher --claim --yes
+
+# configure all public packages currently visible under a scope
+trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
 ```
 
 ## Safety model
@@ -41,6 +44,8 @@ trusted-publisher --claim --yes
 - Mutations are serial and wait 2 seconds by default between npm trust changes.
 - `--claim` is explicit: it publishes a minimal placeholder package from a temporary directory for
   missing package names before running `npm trust`.
+- `--scope` is registry-driven: it loads public packages from npm search and treats them as
+  registry packages instead of local workspace packages.
 - Per-package npm failures are reported as `failed` in the final summary.
 - Private packages, restricted packages, missing package names, and non-npm registries are skipped.
 
@@ -53,6 +58,8 @@ trusted-publisher --claim --yes
 | `--audit`             | Check npm trusted publisher state without applying changes.              |
 | `--report <path>`     | Write a markdown migration report to a path, or `-` for stdout.          |
 | `--claim`             | Publish placeholder packages for missing npm package names.              |
+| `--scope <scope>`     | Configure public packages in an npm scope, such as `@acme`.              |
+| `--scope-limit <n>`   | Maximum packages to load from npm scope search.                          |
 | `--yes`               | Apply high-confidence changes without prompting.                         |
 | `--replace`           | Revoke differing trusted publisher records before recreating them.       |
 | `--repo <owner/repo>` | Override the detected GitHub repository.                                 |

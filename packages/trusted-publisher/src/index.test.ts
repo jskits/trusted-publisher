@@ -188,6 +188,33 @@ describe("trusted-publisher CLI", () => {
     expect(client.calls).toEqual(["packageExists:@scope/a"]);
   });
 
+  it("loads scoped npm packages for dry-run planning", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient({
+      scopePackages: ["@scope/b", "@scope/a", "@other/ignored"],
+    });
+
+    await runCli({
+      argv: ["--scope", "scope", "--workflow", "release.yml", "--dry-run", "--json"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    const report = JSON.parse(stdout.toString()) as {
+      discovery: { packages: Array<{ name: string; relativePath: string }> };
+      plans: Array<{ package: { name: string } }>;
+    };
+    expect(stderr.toString()).toBe("");
+    expect(report.discovery.packages.map((pkg) => [pkg.name, pkg.relativePath])).toEqual([
+      ["@scope/a", "npm:@scope/a"],
+      ["@scope/b", "npm:@scope/b"],
+    ]);
+    expect(report.plans.map((plan) => plan.package.name)).toEqual(["@scope/a", "@scope/b"]);
+    expect(client.calls).toEqual(["listScopePackages:@scope:250"]);
+  });
+
   it("claims missing packages before applying trusted publisher plans", async () => {
     const stdout = new MemoryWritable();
     const stderr = new MemoryWritable();
@@ -274,6 +301,7 @@ function createClient(
   options: {
     readonly npmVersion?: string;
     readonly packageExists?: boolean;
+    readonly scopePackages?: readonly string[];
     readonly trusts?: readonly ExistingTrust[];
   } = {},
 ): NpmClient & { readonly calls: string[] } {
@@ -296,6 +324,10 @@ function createClient(
     async listTrust(packageName) {
       calls.push(`listTrust:${packageName}`);
       return [...(options.trusts ?? [])];
+    },
+    async listScopePackages(scope, scopeOptions) {
+      calls.push(`listScopePackages:${scope}:${scopeOptions?.limit ?? ""}`);
+      return [...(options.scopePackages ?? [])];
     },
     async packageExists(packageName) {
       calls.push(`packageExists:${packageName}`);

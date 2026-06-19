@@ -1,4 +1,4 @@
-import { parseTrustList, trustMatchesPlan } from "./npm.js";
+import { parseSearchPackageNames, parseTrustList, trustMatchesPlan } from "./npm.js";
 import type { TrustedPublisherPlan } from "./planning.js";
 
 describe("npm trusted publisher parsing", () => {
@@ -54,6 +54,20 @@ describe("npm trusted publisher parsing", () => {
       provider: "github",
       repository: "owner/repo",
     });
+  });
+
+  it("normalizes npm search results for scoped packages", () => {
+    expect(
+      parseSearchPackageNames(
+        JSON.stringify([
+          { name: "@scope/b" },
+          { package: { name: "@scope/a" } },
+          { package: { name: "@other/c" } },
+          { name: "@scope/a" },
+        ]),
+        "@scope",
+      ),
+    ).toEqual(["@scope/a", "@scope/b"]);
   });
 });
 
