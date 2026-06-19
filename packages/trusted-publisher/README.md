@@ -22,6 +22,9 @@ npx -y trusted-publisher
 # print planned npm trust commands without npm registry checks or changes
 trusted-publisher --dry-run
 
+# scan a public GitHub repository without cloning it yourself
+trusted-publisher --source https://github.com/owner/repo --dry-run
+
 # force repository or workflow detection
 trusted-publisher --repo owner/repo --workflow release.yml
 
@@ -42,6 +45,8 @@ trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
 - Existing matching trusted publishers are skipped.
 - Existing differing trusted publishers are blocked unless `--replace` is set.
 - Mutations are serial and wait 2 seconds by default between npm trust changes.
+- `--source` clones a public GitHub repository into a temporary directory for scanning, then
+  removes it before the process exits.
 - `--claim` is explicit: it publishes a minimal placeholder package from a temporary directory for
   missing package names before running `npm trust`.
 - `--scope` is registry-driven: it loads public packages from npm search and treats them as
@@ -54,6 +59,7 @@ trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
 | Option                | Description                                                              |
 | --------------------- | ------------------------------------------------------------------------ |
 | `--dry-run`           | Print planned `npm trust github` commands without npm checks or changes. |
+| `--source <url>`      | Scan a public GitHub repository instead of the current directory.        |
 | `--json`              | Write a machine-readable JSON report.                                    |
 | `--audit`             | Check npm trusted publisher state without applying changes.              |
 | `--report <path>`     | Write a markdown migration report to a path, or `-` for stdout.          |
@@ -62,7 +68,7 @@ trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
 | `--scope-limit <n>`   | Maximum packages to load from npm scope search.                          |
 | `--yes`               | Apply high-confidence changes without prompting.                         |
 | `--replace`           | Revoke differing trusted publisher records before recreating them.       |
-| `--repo <owner/repo>` | Override the detected GitHub repository.                                 |
+| `--repo <owner/repo>` | Override the GitHub repository passed to `npm trust`.                    |
 | `--workflow <file>`   | Override the detected workflow filename, such as `release.yml`.          |
 | `--publish-only`      | Configure `--allow-publish` only.                                        |
 | `--stage-only`        | Configure `--allow-stage-publish` only.                                  |

@@ -25,6 +25,7 @@ import { createNpmCliClient, type NpmClient, type NpmClientOptions } from "./npm
 import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
 import { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
 import { normalizeNpmScope, withScopePackages } from "./scope.js";
+import { discoverSourceWorkspace, type SourceDiscovery } from "./source.js";
 import { formatTrustFieldDiff } from "./trust-diff.js";
 
 export {
@@ -41,6 +42,7 @@ export { discoverPackages, readWorkspacePatterns } from "./packages.js";
 export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
 export { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
 export { createScopePackages, normalizeNpmScope, withScopePackages } from "./scope.js";
+export { discoverSourceWorkspace, parseGitHubSource } from "./source.js";
 export { resolvePublishTopology } from "./topology.js";
 export { compareTrustToPlan, formatTrustFieldDiff } from "./trust-diff.js";
 export { discoverGitHubWorkflows } from "./workflows.js";
@@ -69,6 +71,7 @@ export interface CliInput extends NodeJS.ReadableStream {
 
 export interface CliServices {
   readonly createNpmClient: (options: NpmClientOptions) => NpmClient;
+  readonly discoverSourceWorkspace: (source: string) => Promise<SourceDiscovery>;
   readonly discoverWorkspace: () => WorkspaceDiscovery;
 }
 
@@ -102,6 +105,10 @@ export function createProgram(
     .description("Bulk configure npm trusted publishing for GitHub monorepos.")
     .version(readPackageVersion())
     .option("--dry-run", "print the planned npm trust commands without changing npm")
+    .option(
+      "--source <github-url>",
+      "scan a public GitHub repository instead of the current directory",
+    )
     .option("--repo <owner/repo>", "override the detected GitHub repository")
     .option("--workflow <file>", "override the detected GitHub Actions workflow filename")
     .option("--registry <url>", "use a custom npm registry for npm package and trust checks")
@@ -123,137 +130,205 @@ export function createProgram(
     .option("--stage-only", "allow npm stage publish only")
     .option("--both", "allow npm publish and npm stage publish")
     .action(async (options: CliOptions) => {
-      const permissionMode = resolvePermissionMode(options);
-      let discovery = services.discoverWorkspace();
-      const planningOptions: {
-        permissionMode: PermissionMode;
-        repository?: string;
-        workflowFile?: string;
-      } = { permissionMode };
-      if (options.repo) {
-        planningOptions.repository = options.repo;
-      }
-      if (options.workflow) {
-        planningOptions.workflowFile = options.workflow;
-      }
-      const clientOptions: { registry?: string } = {};
-      if (options.registry) {
-        clientOptions.registry = options.registry;
-      }
+      let sourceDiscovery: SourceDiscovery | undefined;
 
-      let client: NpmClient | undefined;
-      if (options.scope) {
-        const scope = normalizeNpmScope(options.scope);
-        client = services.createNpmClient(clientOptions);
-        const packageNames = await client.listScopePackages(scope, { limit: options.scopeLimit });
-        discovery = withScopePackages(discovery, packageNames, scope);
-      }
-
-      const plans = buildTrustedPublisherPlans(discovery, planningOptions);
-      if (options.json && options.report === "-") {
-        throw new Error("--report - cannot be combined with --json because both write to stdout.");
-      }
-
-      if (!options.json) {
-        printPlanSummary(discovery, plans, options, io);
-      }
-
-      if (options.dryRun && !options.claim) {
-        writeMigrationReportIfRequested({ discovery, plans }, options, io);
-        if (options.json) {
-          printJsonReport({ discovery, mode: "dry-run", plans }, io);
-        } else {
-          io.stdout.write("\nDry run: no npm changes will be made.\n");
+      try {
+        const permissionMode = resolvePermissionMode(options);
+        sourceDiscovery = options.source
+          ? await services.discoverSourceWorkspace(options.source)
+          : undefined;
+        let discovery = sourceDiscovery?.discovery ?? services.discoverWorkspace();
+        const planningOptions: {
+          permissionMode: PermissionMode;
+          repository?: string;
+          workflowFile?: string;
+        } = { permissionMode };
+        if (options.repo) {
+          planningOptions.repository = options.repo;
+        } else if (sourceDiscovery) {
+          planningOptions.repository = sourceDiscovery.repository;
         }
-        return;
-      }
-
-      let claimPlans: PackageClaimPlan[] = [];
-      let claimResults: PackageClaimResult[] = [];
-      let claimMutationDeferred = false;
-
-      const applyOptions: { delayMs: number; replace?: boolean } = {
-        delayMs: options.delayMs,
-      };
-      if (options.replace) {
-        applyOptions.replace = true;
-      }
-
-      client ??= services.createNpmClient(clientOptions);
-      if (!options.dryRun) {
-        const prerequisiteIssues = checkRuntimePrerequisites({
-          nodeVersion: process.versions.node,
-          npmVersion: await client.getVersion(),
-        });
-        if (prerequisiteIssues.length > 0) {
-          throw new Error(formatRuntimePrerequisiteIssues(prerequisiteIssues));
+        if (options.workflow) {
+          planningOptions.workflowFile = options.workflow;
         }
-      }
+        const clientOptions: { registry?: string } = {};
+        if (options.registry) {
+          clientOptions.registry = options.registry;
+        }
 
-      if (options.claim) {
-        claimPlans = await checkPackageClaimPlans(plans, client, applyOptions);
+        let client: NpmClient | undefined;
+        if (options.scope) {
+          const scope = normalizeNpmScope(options.scope);
+          client = services.createNpmClient(clientOptions);
+          const packageNames = await client.listScopePackages(scope, { limit: options.scopeLimit });
+          discovery = withScopePackages(discovery, packageNames, scope);
+        }
+
+        const plans = buildTrustedPublisherPlans(discovery, planningOptions);
+        if (options.json && options.report === "-") {
+          throw new Error(
+            "--report - cannot be combined with --json because both write to stdout.",
+          );
+        }
+
         if (!options.json) {
-          printPackageClaimSummary(claimPlans, io);
+          printPlanSummary(discovery, plans, options, io);
         }
 
-        if (options.dryRun) {
-          writeMigrationReportIfRequested({ claimPlans, discovery, plans }, options, io);
+        if (options.dryRun && !options.claim) {
+          writeMigrationReportIfRequested({ discovery, plans }, options, io);
           if (options.json) {
-            printJsonReport({ claimPlans, discovery, mode: "dry-run", plans }, io);
+            printJsonReport({ discovery, mode: "dry-run", plans }, io);
           } else {
             io.stdout.write("\nDry run: no npm changes will be made.\n");
           }
           return;
         }
 
-        const claimMutableCount = claimPlans.filter(willApplyPackageClaim).length;
-        if (!options.audit && claimMutableCount > 0) {
-          let shouldClaim = shouldApply(options, env);
-          if (!shouldClaim) {
+        let claimPlans: PackageClaimPlan[] = [];
+        let claimResults: PackageClaimResult[] = [];
+        let claimMutationDeferred = false;
+
+        const applyOptions: { delayMs: number; replace?: boolean } = {
+          delayMs: options.delayMs,
+        };
+        if (options.replace) {
+          applyOptions.replace = true;
+        }
+
+        client ??= services.createNpmClient(clientOptions);
+        if (!options.dryRun) {
+          const prerequisiteIssues = checkRuntimePrerequisites({
+            nodeVersion: process.versions.node,
+            npmVersion: await client.getVersion(),
+          });
+          if (prerequisiteIssues.length > 0) {
+            throw new Error(formatRuntimePrerequisiteIssues(prerequisiteIssues));
+          }
+        }
+
+        if (options.claim) {
+          claimPlans = await checkPackageClaimPlans(plans, client, applyOptions);
+          if (!options.json) {
+            printPackageClaimSummary(claimPlans, io);
+          }
+
+          if (options.dryRun) {
+            writeMigrationReportIfRequested({ claimPlans, discovery, plans }, options, io);
             if (options.json) {
-              claimMutationDeferred = true;
+              printJsonReport({ claimPlans, discovery, mode: "dry-run", plans }, io);
             } else {
-              shouldClaim = await confirmPackageClaims(claimMutableCount, io);
-              claimMutationDeferred = !shouldClaim;
-              if (!shouldClaim) {
-                io.stdout.write("\nNo package claims made.\n");
+              io.stdout.write("\nDry run: no npm changes will be made.\n");
+            }
+            return;
+          }
+
+          const claimMutableCount = claimPlans.filter(willApplyPackageClaim).length;
+          if (!options.audit && claimMutableCount > 0) {
+            let shouldClaim = shouldApply(options, env);
+            if (!shouldClaim) {
+              if (options.json) {
+                claimMutationDeferred = true;
+              } else {
+                shouldClaim = await confirmPackageClaims(claimMutableCount, io);
+                claimMutationDeferred = !shouldClaim;
+                if (!shouldClaim) {
+                  io.stdout.write("\nNo package claims made.\n");
+                }
+              }
+            }
+
+            if (shouldClaim) {
+              claimResults = await applyPackageClaimPlans(claimPlans, client, applyOptions);
+              if (!options.json) {
+                printPackageClaimApplySummary(claimResults, io);
               }
             }
           }
-
-          if (shouldClaim) {
-            claimResults = await applyPackageClaimPlans(claimPlans, client, applyOptions);
-            if (!options.json) {
-              printPackageClaimApplySummary(claimResults, io);
-            }
-          }
         }
-      }
 
-      const checkedPlans = await checkTrustedPublisherPlans(plans, client, applyOptions);
-      if (options.audit) {
-        writeMigrationReportIfRequested(
-          { checkedPlans, claimPlans, discovery, plans },
-          options,
-          io,
-        );
-        if (options.json) {
-          printJsonReport({ checkedPlans, claimPlans, discovery, mode: "audit", plans }, io);
-        } else {
+        const checkedPlans = await checkTrustedPublisherPlans(plans, client, applyOptions);
+        if (options.audit) {
+          writeMigrationReportIfRequested(
+            { checkedPlans, claimPlans, discovery, plans },
+            options,
+            io,
+          );
+          if (options.json) {
+            printJsonReport({ checkedPlans, claimPlans, discovery, mode: "audit", plans }, io);
+          } else {
+            printNpmCheckSummary(checkedPlans, io);
+          }
+          process.exitCode = determineAuditExitCode(checkedPlans, claimPlans);
+          return;
+        }
+
+        if (!options.json) {
           printNpmCheckSummary(checkedPlans, io);
         }
-        process.exitCode = determineAuditExitCode(checkedPlans, claimPlans);
-        return;
-      }
 
-      if (!options.json) {
-        printNpmCheckSummary(checkedPlans, io);
-      }
+        const mutableCount = checkedPlans.filter((checkedPlan) => willApply(checkedPlan)).length;
+        if (mutableCount === 0) {
+          writeMigrationReportIfRequested(
+            { checkedPlans, claimPlans, claimResults, discovery, plans, results: [] },
+            options,
+            io,
+          );
+          if (options.json) {
+            printJsonReport(
+              {
+                checkedPlans,
+                claimPlans,
+                claimResults,
+                discovery,
+                mode: claimMutationDeferred ? "plan" : "apply",
+                plans,
+                results: [],
+              },
+              io,
+            );
+          } else {
+            io.stdout.write("\nNo high-confidence npm changes to apply.\n");
+          }
+          return;
+        }
 
-      const mutableCount = checkedPlans.filter((checkedPlan) => willApply(checkedPlan)).length;
-      if (mutableCount === 0) {
+        if (!shouldApply(options, env)) {
+          if (options.json) {
+            writeMigrationReportIfRequested(
+              { checkedPlans, claimPlans, claimResults, discovery, plans },
+              options,
+              io,
+            );
+            printJsonReport(
+              {
+                checkedPlans,
+                claimPlans,
+                claimResults,
+                discovery,
+                mode: "plan",
+                plans,
+              },
+              io,
+            );
+            return;
+          }
+
+          const confirmed = await confirmApply(mutableCount, io);
+          if (!confirmed) {
+            io.stdout.write("\nNo npm changes made.\n");
+            writeMigrationReportIfRequested(
+              { checkedPlans, claimPlans, claimResults, discovery, plans },
+              options,
+              io,
+            );
+            return;
+          }
+        }
+
+        const results = await applyCheckedTrustedPublisherPlans(checkedPlans, client, applyOptions);
         writeMigrationReportIfRequested(
-          { checkedPlans, claimPlans, claimResults, discovery, plans, results: [] },
+          { checkedPlans, claimPlans, claimResults, discovery, plans, results },
           options,
           io,
         );
@@ -264,72 +339,17 @@ export function createProgram(
               claimPlans,
               claimResults,
               discovery,
-              mode: claimMutationDeferred ? "plan" : "apply",
+              mode: "apply",
               plans,
-              results: [],
+              results,
             },
             io,
           );
         } else {
-          io.stdout.write("\nNo high-confidence npm changes to apply.\n");
+          printApplySummary(results, io);
         }
-        return;
-      }
-
-      if (!shouldApply(options, env)) {
-        if (options.json) {
-          writeMigrationReportIfRequested(
-            { checkedPlans, claimPlans, claimResults, discovery, plans },
-            options,
-            io,
-          );
-          printJsonReport(
-            {
-              checkedPlans,
-              claimPlans,
-              claimResults,
-              discovery,
-              mode: "plan",
-              plans,
-            },
-            io,
-          );
-          return;
-        }
-
-        const confirmed = await confirmApply(mutableCount, io);
-        if (!confirmed) {
-          io.stdout.write("\nNo npm changes made.\n");
-          writeMigrationReportIfRequested(
-            { checkedPlans, claimPlans, claimResults, discovery, plans },
-            options,
-            io,
-          );
-          return;
-        }
-      }
-
-      const results = await applyCheckedTrustedPublisherPlans(checkedPlans, client, applyOptions);
-      writeMigrationReportIfRequested(
-        { checkedPlans, claimPlans, claimResults, discovery, plans, results },
-        options,
-        io,
-      );
-      if (options.json) {
-        printJsonReport(
-          {
-            checkedPlans,
-            claimPlans,
-            claimResults,
-            discovery,
-            mode: "apply",
-            plans,
-            results,
-          },
-          io,
-        );
-      } else {
-        printApplySummary(results, io);
+      } finally {
+        sourceDiscovery?.cleanup();
       }
     });
 
@@ -350,6 +370,7 @@ interface CliOptions {
   readonly repo?: string;
   readonly scope?: string;
   readonly scopeLimit: number;
+  readonly source?: string;
   readonly stageOnly?: boolean;
   readonly workflow?: string;
   readonly yes?: boolean;
@@ -414,6 +435,7 @@ function resolvePermissionMode(options: CliOptions): PermissionMode {
 
 const defaultServices: CliServices = {
   createNpmClient: createNpmCliClient,
+  discoverSourceWorkspace,
   discoverWorkspace,
 };
 

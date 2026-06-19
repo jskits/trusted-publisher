@@ -6,6 +6,7 @@ Bulk configure npm trusted publishing for GitHub monorepos.
 
 ```sh
 npx -y trusted-publisher
+npx -y trusted-publisher --source https://github.com/owner/repo
 ```
 
 The CLI discovers workspace packages and GitHub Actions publishing workflows, checks npm trusted

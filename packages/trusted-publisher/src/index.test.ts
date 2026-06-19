@@ -6,6 +6,7 @@ import { Readable, Writable } from "node:stream";
 import type { WorkspaceDiscovery } from "./discovery.js";
 import { createProgram, readPackageVersion, runCli, type CliServices } from "./index.js";
 import type { ExistingTrust, NpmClient } from "./npm.js";
+import type { SourceDiscovery } from "./source.js";
 
 class MemoryWritable extends Writable {
   public chunks: string[] = [];
@@ -215,6 +216,55 @@ describe("trusted-publisher CLI", () => {
     expect(client.calls).toEqual(["listScopePackages:@scope:250"]);
   });
 
+  it("scans a GitHub source instead of the current directory", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient();
+    const sourceCalls: string[] = [];
+    let cleanupCalls = 0;
+
+    await runCli({
+      argv: ["--source", "https://github.com/remote/repo", "--dry-run", "--json"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client, {
+        async discoverSourceWorkspace(source) {
+          sourceCalls.push(source);
+          return {
+            cleanup: () => {
+              cleanupCalls += 1;
+            },
+            discovery: createDiscovery({
+              packageName: "@remote/pkg",
+              repository: "remote/repo",
+              rootDir: "/tmp/trusted-publisher-source/repo",
+            }),
+            repository: "remote/repo",
+            source,
+          };
+        },
+      }),
+    });
+
+    const report = JSON.parse(stdout.toString()) as {
+      discovery: { repository: { githubRepository: string; rootDir: string } };
+      plans: Array<{ command: string; package: { name: string }; repository: string }>;
+    };
+    expect(stderr.toString()).toBe("");
+    expect(sourceCalls).toEqual(["https://github.com/remote/repo"]);
+    expect(cleanupCalls).toBe(1);
+    expect(report.discovery.repository).toMatchObject({
+      githubRepository: "remote/repo",
+      rootDir: "/tmp/trusted-publisher-source/repo",
+    });
+    expect(report.plans[0]).toMatchObject({
+      package: { name: "@remote/pkg" },
+      repository: "remote/repo",
+    });
+    expect(report.plans[0]?.command).toContain('--repo "remote/repo"');
+    expect(client.calls).toEqual([]);
+  });
+
   it("claims missing packages before applying trusted publisher plans", async () => {
     const stdout = new MemoryWritable();
     const stderr = new MemoryWritable();
@@ -290,9 +340,17 @@ describe("trusted-publisher CLI", () => {
   });
 });
 
-function createServices(client: NpmClient): Partial<CliServices> {
+function createServices(
+  client: NpmClient,
+  options: {
+    readonly discoverSourceWorkspace?: (source: string) => Promise<SourceDiscovery>;
+  } = {},
+): Partial<CliServices> {
   return {
     createNpmClient: () => client,
+    ...(options.discoverSourceWorkspace
+      ? { discoverSourceWorkspace: options.discoverSourceWorkspace }
+      : {}),
     discoverWorkspace: () => createDiscovery(),
   };
 }
@@ -339,12 +397,22 @@ function createClient(
   };
 }
 
-function createDiscovery(): WorkspaceDiscovery {
+function createDiscovery(
+  options: {
+    readonly packageName?: string;
+    readonly repository?: string;
+    readonly rootDir?: string;
+  } = {},
+): WorkspaceDiscovery {
+  const packageName = options.packageName ?? "@scope/a";
+  const repository = options.repository ?? "owner/repo";
+  const rootDir = options.rootDir ?? "/repo";
+
   return {
     packages: [
       {
-        directory: "/repo/packages/a",
-        name: "@scope/a",
+        directory: `${rootDir}/packages/a`,
+        name: packageName,
         private: false,
         publishable: true,
         relativePath: "packages/a",
@@ -353,16 +421,16 @@ function createDiscovery(): WorkspaceDiscovery {
       },
     ],
     repository: {
-      githubRepository: "owner/repo",
-      remoteUrl: "git@github.com:owner/repo.git",
-      rootDir: "/repo",
+      githubRepository: repository,
+      remoteUrl: `git@github.com:${repository}.git`,
+      rootDir,
     },
     workflows: [
       {
         candidates: [],
         evidence: [],
         fileName: "release.yml",
-        path: "/repo/.github/workflows/release.yml",
+        path: `${rootDir}/.github/workflows/release.yml`,
         relativePath: ".github/workflows/release.yml",
         signals: {
           changesetsAction: false,
