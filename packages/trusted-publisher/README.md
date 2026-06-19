@@ -56,7 +56,7 @@ trusted-publisher --replace --yes
 ## Requirements
 
 - Node.js `>=22.14.0`
-- npm CLI `>=11.5.1` with `npm trust`
+- npm CLI `>=11.15.0` with `npm trust`
 - Existing packages on npm; npm trusted publishing cannot be configured for packages that have
   never been published.
 - GitHub Actions workflows under `.github/workflows/`.

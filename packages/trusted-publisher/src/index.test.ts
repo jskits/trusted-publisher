@@ -132,7 +132,7 @@ describe("trusted-publisher CLI", () => {
       services: createServices(client),
     });
 
-    expect(stderr.toString()).toContain("npm CLI >= 11.5.1 is required; found 10.9.0.");
+    expect(stderr.toString()).toContain("npm CLI >= 11.15.0 is required; found 10.9.0.");
     expect(client.calls).toEqual(["getVersion"]);
   });
 
@@ -171,7 +171,7 @@ function createClient(
     },
     async getVersion() {
       calls.push("getVersion");
-      return options.npmVersion ?? "11.5.1";
+      return options.npmVersion ?? "11.15.0";
     },
     async listTrust(packageName) {
       calls.push(`listTrust:${packageName}`);

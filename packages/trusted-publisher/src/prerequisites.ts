@@ -1,5 +1,5 @@
 export const minimumNodeVersion = "22.14.0";
-export const minimumNpmVersion = "11.5.1";
+export const minimumNpmVersion = "11.15.0";
 
 export interface RuntimePrerequisiteVersions {
   readonly nodeVersion: string;

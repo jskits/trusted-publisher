@@ -117,7 +117,7 @@ function createClient(
     },
     async getVersion() {
       calls.push("getVersion");
-      return "11.5.1";
+      return "11.15.0";
     },
     async listTrust(packageName) {
       calls.push(`listTrust:${packageName}`);

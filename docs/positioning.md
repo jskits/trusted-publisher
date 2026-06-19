@@ -1,9 +1,10 @@
 # Product Positioning
 
 As of June 20, 2026, npm trusted publishing is available through the official
-`npm trust` command, but the command documentation states that it is unaware of
-workspaces. npm also documents bulk usage as a shell loop over package names,
-with a 2 second delay between calls to avoid rate limiting.
+`npm trust` command. The command documentation requires npm `>=11.15.0` and
+states that it is unaware of workspaces. npm also documents bulk usage as a shell
+loop over package names, with a 2 second delay between calls to avoid rate
+limiting.
 
 This project should therefore focus on the work npm does not do for monorepos:
 
