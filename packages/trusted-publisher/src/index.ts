@@ -5,6 +5,13 @@ import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import pc from "picocolors";
 
+import { discoverWorkspace } from "./discovery.js";
+
+export { discoverWorkspace } from "./discovery.js";
+export { discoverRepository, findRepoRoot, parseGitHubRepository } from "./git.js";
+export { discoverPackages, readWorkspacePatterns } from "./packages.js";
+export { discoverGitHubWorkflows } from "./workflows.js";
+
 export interface CliIo {
   readonly stderr: NodeJS.WritableStream;
   readonly stdout: NodeJS.WritableStream;
@@ -47,9 +54,22 @@ export function createProgram(io: CliIo = defaultIo): Command {
     .option("--dry-run", "print the planned npm trust commands without changing npm")
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
     .action((options: { readonly dryRun?: boolean; readonly yes?: boolean }) => {
-      const mode = options.dryRun ? "dry run" : "scan";
-      io.stdout.write(`${pc.bold("trusted-publisher")} ${mode} is ready.\n`);
-      io.stdout.write("Package discovery and workflow planning will be added next.\n");
+      const discovery = discoverWorkspace();
+      const publishablePackages = discovery.packages.filter((pkg) => pkg.publishable);
+      const skippedPackages = discovery.packages.filter((pkg) => !pkg.publishable);
+
+      io.stdout.write(`${pc.bold("trusted-publisher")} scan\n`);
+      io.stdout.write(`Repository root: ${discovery.repository.rootDir}\n`);
+      io.stdout.write(
+        `GitHub repository: ${discovery.repository.githubRepository ?? "not detected"}\n`,
+      );
+      io.stdout.write(`Publishable packages: ${publishablePackages.length}\n`);
+      io.stdout.write(`Skipped packages: ${skippedPackages.length}\n`);
+      io.stdout.write(`GitHub workflows: ${discovery.workflows.length}\n`);
+
+      if (options.dryRun) {
+        io.stdout.write("Dry run: no npm changes will be made.\n");
+      }
     });
 
   return program;

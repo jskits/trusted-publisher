@@ -30,7 +30,7 @@ describe("trusted-publisher CLI", () => {
     expect(readPackageVersion()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("prints the current scaffold status", async () => {
+  it("prints the scan summary", async () => {
     const stdout = new MemoryWritable();
     const stderr = new MemoryWritable();
 
@@ -40,7 +40,8 @@ describe("trusted-publisher CLI", () => {
     });
 
     expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("trusted-publisher dry run is ready");
+    expect(stdout.toString()).toContain("trusted-publisher scan");
+    expect(stdout.toString()).toContain("Dry run: no npm changes will be made.");
   });
 
   it("prints the version without treating Commander exit as a failure", async () => {
