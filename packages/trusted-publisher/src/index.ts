@@ -1,16 +1,26 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 import { Command, CommanderError } from "commander";
 import pc from "picocolors";
 
-import { applyTrustedPublisherPlans, type ApplyResult } from "./apply.js";
-import { discoverWorkspace } from "./discovery.js";
-import { createNpmCliClient } from "./npm.js";
+import {
+  applyCheckedTrustedPublisherPlans,
+  checkTrustedPublisherPlans,
+  type ApplyResult,
+  type CheckedPlan,
+} from "./apply.js";
+import { discoverWorkspace, type WorkspaceDiscovery } from "./discovery.js";
+import { createNpmCliClient, type NpmClient, type NpmClientOptions } from "./npm.js";
 import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
 
-export { applyTrustedPublisherPlans, checkTrustedPublisherPlans } from "./apply.js";
+export {
+  applyCheckedTrustedPublisherPlans,
+  applyTrustedPublisherPlans,
+  checkTrustedPublisherPlans,
+} from "./apply.js";
 export { discoverWorkspace } from "./discovery.js";
 export { discoverRepository, findRepoRoot, parseGitHubRepository } from "./git.js";
 export { createNpmCliClient, parseTrustList, trustMatchesPlan } from "./npm.js";
@@ -19,13 +29,16 @@ export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js
 export { discoverGitHubWorkflows } from "./workflows.js";
 
 export interface CliIo {
+  readonly stdin?: CliInput;
   readonly stderr: NodeJS.WritableStream;
   readonly stdout: NodeJS.WritableStream;
 }
 
 export interface RunCliOptions {
   readonly argv?: readonly string[];
+  readonly env?: Record<string, string | undefined>;
   readonly io?: CliIo;
+  readonly services?: Partial<CliServices>;
 }
 
 interface PackageManifest {
@@ -33,12 +46,26 @@ interface PackageManifest {
   readonly version?: string;
 }
 
+export interface CliInput extends NodeJS.ReadableStream {
+  readonly isTTY?: boolean;
+}
+
+export interface CliServices {
+  readonly createNpmClient: (options: NpmClientOptions) => NpmClient;
+  readonly discoverWorkspace: () => WorkspaceDiscovery;
+}
+
 const defaultIo: CliIo = {
+  stdin: process.stdin,
   stderr: process.stderr,
   stdout: process.stdout,
 };
 
-export function createProgram(io: CliIo = defaultIo): Command {
+export function createProgram(
+  io: CliIo = defaultIo,
+  services: CliServices = defaultServices,
+  env: Record<string, string | undefined> = process.env,
+): Command {
   const program = new Command();
 
   program.configureOutput({
@@ -69,7 +96,7 @@ export function createProgram(io: CliIo = defaultIo): Command {
     .option("--both", "allow npm publish and npm stage publish")
     .action(async (options: CliOptions) => {
       const permissionMode = resolvePermissionMode(options);
-      const discovery = discoverWorkspace();
+      const discovery = services.discoverWorkspace();
       const planningOptions: {
         permissionMode: PermissionMode;
         repository?: string;
@@ -113,11 +140,6 @@ export function createProgram(io: CliIo = defaultIo): Command {
         return;
       }
 
-      if (!shouldApply(options)) {
-        io.stdout.write("\nNo npm changes made. Use --yes to apply high-confidence plans.\n");
-        return;
-      }
-
       const clientOptions: { registry?: string } = {};
       if (options.registry) {
         clientOptions.registry = options.registry;
@@ -130,11 +152,25 @@ export function createProgram(io: CliIo = defaultIo): Command {
         applyOptions.replace = true;
       }
 
-      const results = await applyTrustedPublisherPlans(
-        plans,
-        createNpmCliClient(clientOptions),
-        applyOptions,
-      );
+      const client = services.createNpmClient(clientOptions);
+      const checkedPlans = await checkTrustedPublisherPlans(plans, client, applyOptions);
+      printNpmCheckSummary(checkedPlans, io);
+
+      const mutableCount = checkedPlans.filter((checkedPlan) => willApply(checkedPlan)).length;
+      if (mutableCount === 0) {
+        io.stdout.write("\nNo high-confidence npm changes to apply.\n");
+        return;
+      }
+
+      if (!shouldApply(options, env)) {
+        const confirmed = await confirmApply(mutableCount, io);
+        if (!confirmed) {
+          io.stdout.write("\nNo npm changes made.\n");
+          return;
+        }
+      }
+
+      const results = await applyCheckedTrustedPublisherPlans(checkedPlans, client, applyOptions);
       printApplySummary(results, io);
     });
 
@@ -175,8 +211,13 @@ function resolvePermissionMode(options: CliOptions): PermissionMode {
   return "infer";
 }
 
-function shouldApply(options: CliOptions): boolean {
-  return Boolean(options.yes) || process.env.npm_config_yes === "true";
+const defaultServices: CliServices = {
+  createNpmClient: createNpmCliClient,
+  discoverWorkspace,
+};
+
+function shouldApply(options: CliOptions, env: Record<string, string | undefined>): boolean {
+  return Boolean(options.yes) || env.npm_config_yes === "true";
 }
 
 function parseInteger(value: string): number {
@@ -186,6 +227,41 @@ function parseInteger(value: string): number {
   }
 
   return parsed;
+}
+
+function printNpmCheckSummary(checkedPlans: readonly CheckedPlan[], io: CliIo): void {
+  io.stdout.write("\nNpm registry check:\n");
+
+  for (const checkedPlan of checkedPlans) {
+    const name = checkedPlan.plan.package.name ?? checkedPlan.plan.package.relativePath;
+    io.stdout.write(`  ${checkedPlan.action}: ${name}\n`);
+    io.stdout.write(`    package exists: ${formatPackageExists(checkedPlan)}\n`);
+    io.stdout.write(`    existing trusted publishers: ${checkedPlan.existingTrusts.length}\n`);
+
+    for (const reason of checkedPlan.reasons) {
+      io.stdout.write(`    reason: ${reason}\n`);
+    }
+  }
+}
+
+function formatPackageExists(checkedPlan: CheckedPlan): string {
+  if (checkedPlan.packageExists) {
+    return "yes";
+  }
+
+  if (checkedPlan.reasons.some(isPreRegistryReason)) {
+    return "not checked";
+  }
+
+  return "no";
+}
+
+function isPreRegistryReason(reason: string): boolean {
+  return (
+    reason === "package name is required" ||
+    reason === "npm trust command could not be rendered" ||
+    reason.startsWith("plan confidence is ")
+  );
 }
 
 function printApplySummary(results: readonly ApplyResult[], io: CliIo): void {
@@ -202,8 +278,40 @@ function printApplySummary(results: readonly ApplyResult[], io: CliIo): void {
   }
 }
 
+function willApply(checkedPlan: CheckedPlan): boolean {
+  return (
+    checkedPlan.plan.confidence === "high" &&
+    (checkedPlan.action === "create" || checkedPlan.action === "replace")
+  );
+}
+
+async function confirmApply(mutableCount: number, io: CliIo): Promise<boolean> {
+  const stdin = io.stdin ?? process.stdin;
+  if (stdin.isTTY !== true) {
+    io.stdout.write("\nNo interactive input detected. Use --yes to apply high-confidence plans.\n");
+    return false;
+  }
+
+  io.stdout.write(
+    `\nApply ${mutableCount} high-confidence npm change${plural(mutableCount)}? [y/N] `,
+  );
+  const readline = createInterface({ input: stdin, terminal: false });
+  const answer = await readline.question("");
+  readline.close();
+
+  return /^(?:y|yes)$/i.test(answer.trim());
+}
+
+function plural(count: number): string {
+  return count === 1 ? "" : "s";
+}
+
 export async function runCli(options: RunCliOptions = {}): Promise<void> {
-  const program = createProgram(options.io ?? defaultIo);
+  const program = createProgram(
+    options.io ?? defaultIo,
+    { ...defaultServices, ...options.services },
+    options.env ?? process.env,
+  );
   program.exitOverride();
 
   try {

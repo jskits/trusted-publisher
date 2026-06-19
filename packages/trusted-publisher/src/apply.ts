@@ -42,6 +42,14 @@ export async function applyTrustedPublisherPlans(
   options: ApplyOptions = {},
 ): Promise<ApplyResult[]> {
   const checkedPlans = await checkTrustedPublisherPlans(plans, client, options);
+  return applyCheckedTrustedPublisherPlans(checkedPlans, client, options);
+}
+
+export async function applyCheckedTrustedPublisherPlans(
+  checkedPlans: readonly CheckedPlan[],
+  client: NpmClient,
+  options: ApplyOptions = {},
+): Promise<ApplyResult[]> {
   const results: ApplyResult[] = [];
   const delayMs = options.delayMs ?? 2000;
   let alreadyMutated = false;
