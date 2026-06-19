@@ -63,8 +63,12 @@ describe("trusted publisher planning", () => {
         allowStagePublish: false,
       },
       repository: "jskits/loggerjs",
+      score: 95,
       workflowFile: "release.yml",
     });
+    expect(plans[0]?.explain).toContain(
+      "workflow-level fallback detected a direct publish command",
+    );
   });
 
   it("marks skipped packages as low confidence", () => {

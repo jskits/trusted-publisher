@@ -63,6 +63,8 @@ function createPlan(
   return {
     confidence: "high",
     environment: "npm",
+    evidence: [],
+    explain: [],
     package: {
       directory: "/repo/packages/a",
       name: "@scope/a",
@@ -79,6 +81,7 @@ function createPlan(
     },
     reasons: [],
     repository: "owner/repo",
+    score: 95,
     trustArgs: [
       "npm",
       "trust",

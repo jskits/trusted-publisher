@@ -126,12 +126,15 @@ export function createProgram(
 
       for (const plan of plans) {
         const name = plan.package.name ?? plan.package.relativePath;
-        io.stdout.write(`\n${pc.bold(name)} [${plan.confidence}]\n`);
+        io.stdout.write(`\n${pc.bold(name)} [${plan.confidence}, score ${plan.score}]\n`);
         if (plan.workflowFile) {
           io.stdout.write(`  workflow: ${plan.workflowFile}\n`);
         }
         if (plan.command) {
           io.stdout.write(`  command: ${plan.command}\n`);
+        }
+        for (const explanation of plan.explain) {
+          io.stdout.write(`  explain: ${explanation}\n`);
         }
         for (const reason of plan.reasons) {
           io.stdout.write(`  reason: ${reason}\n`);

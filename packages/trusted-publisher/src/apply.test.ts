@@ -166,6 +166,8 @@ function createClient(
 function createPlan(overrides: Partial<TrustedPublisherPlan> = {}): TrustedPublisherPlan {
   return {
     confidence: "high",
+    evidence: [],
+    explain: [],
     package: {
       directory: "/repo/packages/a",
       name: "@scope/a",
@@ -181,6 +183,7 @@ function createPlan(overrides: Partial<TrustedPublisherPlan> = {}): TrustedPubli
     },
     reasons: [],
     repository: "owner/repo",
+    score: 95,
     trustArgs: [
       "npm",
       "trust",
