@@ -137,6 +137,60 @@ For large scopes, tune the search limit:
 trusted-publisher --scope @scope --scope-limit 500 --repo owner/repo --workflow release.yml
 ```
 
+## Claiming Unpublished Packages
+
+npm trusted publishing can only be configured after a package exists on npm. Use `--claim` when a
+workspace package name has not been published yet:
+
+```sh
+trusted-publisher --claim --yes
+```
+
+Claiming is never implicit. When enabled, the CLI publishes a minimal placeholder package from a
+temporary directory using version `0.0.0` and the `trusted-publisher-claim` dist-tag, then reruns the
+trusted publisher checks. It does not publish the package source from your repository.
+
+Use a dry run to preview claimable packages:
+
+```sh
+trusted-publisher --claim --dry-run
+```
+
+## Audit, JSON, and Migration Reports
+
+Use audit mode in CI when you want drift detection without mutation:
+
+```sh
+trusted-publisher --audit
+trusted-publisher --audit --json
+```
+
+Audit exit codes are:
+
+- `0`: no trusted publisher changes are needed.
+- `1`: actionable changes are available, such as create, replace, or claim.
+- `2`: blocked or manual-review work remains.
+
+Use JSON output for automation:
+
+```sh
+trusted-publisher --dry-run --json
+trusted-publisher --audit --json
+```
+
+The JSON report includes discovered packages and workflows, planned commands, confidence scores,
+check results, claim plans, apply results, and a numeric summary.
+
+Use a Markdown migration report when handing a migration plan to humans:
+
+```sh
+trusted-publisher --audit --report trusted-publisher-report.md
+trusted-publisher --dry-run --report -
+```
+
+`--report -` writes Markdown to stdout. It cannot be combined with `--json` because both formats use
+stdout.
+
 ## Safety model
 
 - `--yes` and `npx -y` apply only high-confidence plans.
