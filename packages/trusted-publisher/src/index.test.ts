@@ -164,6 +164,55 @@ describe("trusted-publisher CLI", () => {
     process.exitCode = undefined;
   });
 
+  it("prints JSON dry-run claim reports without npm mutations", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient({ packageExists: false });
+
+    await runCli({
+      argv: ["--dry-run", "--claim", "--json"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    const report = JSON.parse(stdout.toString()) as {
+      claimPlans: Array<{ action: string }>;
+      mode: string;
+      summary: { claimNeeded: number };
+    };
+    expect(stderr.toString()).toBe("");
+    expect(report.mode).toBe("dry-run");
+    expect(report.claimPlans[0]?.action).toBe("claim");
+    expect(report.summary.claimNeeded).toBe(1);
+    expect(client.calls).toEqual(["packageExists:@scope/a"]);
+  });
+
+  it("claims missing packages before applying trusted publisher plans", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient({ packageExists: false });
+
+    await runCli({
+      argv: ["--claim", "--yes", "--delay-ms", "0"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toContain("Package claim summary:");
+    expect(stdout.toString()).toContain("Apply summary:");
+    expect(client.calls).toEqual([
+      "getVersion",
+      "packageExists:@scope/a",
+      "claim:@scope/a:0.0.0",
+      "packageExists:@scope/a",
+      "listTrust:@scope/a",
+      "create:@scope/a",
+    ]);
+  });
+
   it("writes markdown migration reports", async () => {
     const stdout = new MemoryWritable();
     const stderr = new MemoryWritable();
@@ -224,13 +273,19 @@ function createServices(client: NpmClient): Partial<CliServices> {
 function createClient(
   options: {
     readonly npmVersion?: string;
+    readonly packageExists?: boolean;
     readonly trusts?: readonly ExistingTrust[];
   } = {},
 ): NpmClient & { readonly calls: string[] } {
   const calls: string[] = [];
+  const claimed = new Set<string>();
 
   return {
     calls,
+    async claimPackage(packageName, claimOptions) {
+      calls.push(`claim:${packageName}:${claimOptions?.version ?? ""}`);
+      claimed.add(packageName);
+    },
     async createTrust(plan) {
       calls.push(`create:${plan.package.name ?? plan.package.relativePath}`);
     },
@@ -244,7 +299,7 @@ function createClient(
     },
     async packageExists(packageName) {
       calls.push(`packageExists:${packageName}`);
-      return true;
+      return claimed.has(packageName) || (options.packageExists ?? true);
     },
     async revokeTrust(packageName, trustId) {
       calls.push(`revoke:${packageName}:${trustId}`);

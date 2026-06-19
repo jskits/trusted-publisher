@@ -27,6 +27,9 @@ trusted-publisher --repo owner/repo --workflow release.yml
 
 # replace an existing trusted publisher that points somewhere else
 trusted-publisher --replace --yes
+
+# claim unpublished package names with placeholder packages, then configure trust
+trusted-publisher --claim --yes
 ```
 
 ## Safety model
@@ -36,6 +39,8 @@ trusted-publisher --replace --yes
 - Existing matching trusted publishers are skipped.
 - Existing differing trusted publishers are blocked unless `--replace` is set.
 - Mutations are serial and wait 2 seconds by default between npm trust changes.
+- `--claim` is explicit: it publishes a minimal placeholder package from a temporary directory for
+  missing package names before running `npm trust`.
 - Per-package npm failures are reported as `failed` in the final summary.
 - Private packages, restricted packages, missing package names, and non-npm registries are skipped.
 
@@ -44,6 +49,10 @@ trusted-publisher --replace --yes
 | Option                | Description                                                              |
 | --------------------- | ------------------------------------------------------------------------ |
 | `--dry-run`           | Print planned `npm trust github` commands without npm checks or changes. |
+| `--json`              | Write a machine-readable JSON report.                                    |
+| `--audit`             | Check npm trusted publisher state without applying changes.              |
+| `--report <path>`     | Write a markdown migration report to a path, or `-` for stdout.          |
+| `--claim`             | Publish placeholder packages for missing npm package names.              |
 | `--yes`               | Apply high-confidence changes without prompting.                         |
 | `--replace`           | Revoke differing trusted publisher records before recreating them.       |
 | `--repo <owner/repo>` | Override the detected GitHub repository.                                 |
@@ -58,8 +67,8 @@ trusted-publisher --replace --yes
 
 - Node.js `>=22.14.0`
 - npm CLI `>=11.15.0` with `npm trust`
-- Existing packages on npm; npm trusted publishing cannot be configured for packages that have
-  never been published.
+- Existing packages on npm by default. Use `--claim` to publish minimal placeholder packages for
+  missing names before configuring trusted publishing.
 - GitHub Actions workflows under `.github/workflows/`.
 
 The generated command shape follows npm's trusted publishing CLI:

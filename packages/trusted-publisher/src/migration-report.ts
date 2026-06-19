@@ -1,4 +1,5 @@
 import type { ApplyResult, CheckedPlan } from "./apply.js";
+import type { PackageClaimPlan, PackageClaimResult } from "./claim.js";
 import type { WorkspaceDiscovery } from "./discovery.js";
 import type { TrustedPublisherPlan } from "./planning.js";
 import { resolvePublishTopology } from "./topology.js";
@@ -6,6 +7,8 @@ import { formatTrustFieldDiff } from "./trust-diff.js";
 
 export interface MigrationReportInput {
   readonly checkedPlans?: readonly CheckedPlan[];
+  readonly claimPlans?: readonly PackageClaimPlan[];
+  readonly claimResults?: readonly PackageClaimResult[];
   readonly discovery: WorkspaceDiscovery;
   readonly plans: readonly TrustedPublisherPlan[];
   readonly results?: readonly ApplyResult[];
@@ -29,6 +32,9 @@ export function generateMigrationReport(input: MigrationReportInput): string {
   );
   lines.push(`- GitHub workflows: ${input.discovery.workflows.length}`);
   lines.push(`- Publish topology: ${topology.kind}`);
+  lines.push(
+    `- Package claims needed: ${input.claimPlans?.filter((plan) => plan.action === "claim").length ?? 0}`,
+  );
   lines.push("");
 
   lines.push("## Plans");
@@ -46,6 +52,10 @@ export function generateMigrationReport(input: MigrationReportInput): string {
   lines.push("");
   for (const plan of input.plans) {
     const checkedPlan = input.checkedPlans?.find((candidate) => candidate.plan === plan);
+    const claimPlan = input.claimPlans?.find((candidate) => candidate.package === plan.package);
+    const claimResult = input.claimResults?.find(
+      (candidate) => candidate.claimPlan.package === plan.package,
+    );
     const result = input.results?.find((candidate) => candidate.checkedPlan.plan === plan);
     const name = plan.package.name ?? plan.package.relativePath;
 
@@ -61,6 +71,17 @@ export function generateMigrationReport(input: MigrationReportInput): string {
     lines.push(
       `- Permissions: publish=${plan.permissions.allowPublish}, stage=${plan.permissions.allowStagePublish}`,
     );
+    if (claimPlan) {
+      lines.push(`- Package claim action: ${claimPlan.action}`);
+      lines.push(`- Package exists before claim: ${formatClaimPackageExists(claimPlan)}`);
+      lines.push(`- Claim placeholder: ${claimPlan.version} (${claimPlan.tag})`);
+    }
+    if (claimResult) {
+      lines.push(`- Package claim status: ${claimResult.status}`);
+      if (claimResult.error) {
+        lines.push(`- Package claim error: ${claimResult.error}`);
+      }
+    }
     if (checkedPlan) {
       lines.push(`- Npm check action: ${checkedPlan.action}`);
       lines.push(`- Package exists on npm: ${checkedPlan.packageExists ? "yes" : "no"}`);
@@ -72,10 +93,15 @@ export function generateMigrationReport(input: MigrationReportInput): string {
         lines.push(`- Apply error: ${result.error}`);
       }
     }
-    if (plan.command) {
+    if (plan.command || claimPlan?.action === "claim") {
       lines.push("");
       lines.push("```sh");
-      lines.push(plan.command);
+      if (claimPlan?.action === "claim") {
+        lines.push(claimPlan.command);
+      }
+      if (plan.command) {
+        lines.push(plan.command);
+      }
       lines.push("```");
     }
     appendList(lines, "Reasons", plan.reasons);
@@ -106,6 +132,14 @@ function appendList(lines: string[], title: string, items: readonly string[]): v
   for (const item of items) {
     lines.push(`- ${item}`);
   }
+}
+
+function formatClaimPackageExists(claimPlan: PackageClaimPlan): string {
+  if (claimPlan.packageExists === undefined) {
+    return "not checked";
+  }
+
+  return claimPlan.packageExists ? "yes" : "no";
 }
 
 function escapeCell(value: string): string {

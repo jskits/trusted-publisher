@@ -12,6 +12,13 @@ import {
   type ApplyResult,
   type CheckedPlan,
 } from "./apply.js";
+import {
+  applyPackageClaimPlans,
+  checkPackageClaimPlans,
+  type PackageClaimPlan,
+  type PackageClaimResult,
+  willApplyPackageClaim,
+} from "./claim.js";
 import { discoverWorkspace, type WorkspaceDiscovery } from "./discovery.js";
 import { generateMigrationReport, type MigrationReportInput } from "./migration-report.js";
 import { createNpmCliClient, type NpmClient, type NpmClientOptions } from "./npm.js";
@@ -24,6 +31,7 @@ export {
   applyTrustedPublisherPlans,
   checkTrustedPublisherPlans,
 } from "./apply.js";
+export { applyPackageClaimPlans, checkPackageClaimPlans, willApplyPackageClaim } from "./claim.js";
 export { discoverWorkspace } from "./discovery.js";
 export { discoverRepository, findRepoRoot, parseGitHubRepository } from "./git.js";
 export { generateMigrationReport } from "./migration-report.js";
@@ -100,6 +108,7 @@ export function createProgram(
     .option("--json", "write a machine-readable JSON report")
     .option("--audit", "check npm trusted publisher state without applying changes")
     .option("--report <path>", "write a markdown migration report to a path, or '-' for stdout")
+    .option("--claim", "publish placeholder packages for missing npm package names")
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
     .option("--publish-only", "allow npm publish only")
     .option("--stage-only", "allow npm stage publish only")
@@ -127,7 +136,7 @@ export function createProgram(
         printPlanSummary(discovery, plans, options, io);
       }
 
-      if (options.dryRun) {
+      if (options.dryRun && !options.claim) {
         writeMigrationReportIfRequested({ discovery, plans }, options, io);
         if (options.json) {
           printJsonReport({ discovery, mode: "dry-run", plans }, io);
@@ -136,6 +145,10 @@ export function createProgram(
         }
         return;
       }
+
+      let claimPlans: PackageClaimPlan[] = [];
+      let claimResults: PackageClaimResult[] = [];
+      let claimMutationDeferred = false;
 
       const clientOptions: { registry?: string } = {};
       if (options.registry) {
@@ -150,23 +163,69 @@ export function createProgram(
       }
 
       const client = services.createNpmClient(clientOptions);
-      const prerequisiteIssues = checkRuntimePrerequisites({
-        nodeVersion: process.versions.node,
-        npmVersion: await client.getVersion(),
-      });
-      if (prerequisiteIssues.length > 0) {
-        throw new Error(formatRuntimePrerequisiteIssues(prerequisiteIssues));
+      if (!options.dryRun) {
+        const prerequisiteIssues = checkRuntimePrerequisites({
+          nodeVersion: process.versions.node,
+          npmVersion: await client.getVersion(),
+        });
+        if (prerequisiteIssues.length > 0) {
+          throw new Error(formatRuntimePrerequisiteIssues(prerequisiteIssues));
+        }
+      }
+
+      if (options.claim) {
+        claimPlans = await checkPackageClaimPlans(plans, client, applyOptions);
+        if (!options.json) {
+          printPackageClaimSummary(claimPlans, io);
+        }
+
+        if (options.dryRun) {
+          writeMigrationReportIfRequested({ claimPlans, discovery, plans }, options, io);
+          if (options.json) {
+            printJsonReport({ claimPlans, discovery, mode: "dry-run", plans }, io);
+          } else {
+            io.stdout.write("\nDry run: no npm changes will be made.\n");
+          }
+          return;
+        }
+
+        const claimMutableCount = claimPlans.filter(willApplyPackageClaim).length;
+        if (!options.audit && claimMutableCount > 0) {
+          let shouldClaim = shouldApply(options, env);
+          if (!shouldClaim) {
+            if (options.json) {
+              claimMutationDeferred = true;
+            } else {
+              shouldClaim = await confirmPackageClaims(claimMutableCount, io);
+              claimMutationDeferred = !shouldClaim;
+              if (!shouldClaim) {
+                io.stdout.write("\nNo package claims made.\n");
+              }
+            }
+          }
+
+          if (shouldClaim) {
+            claimResults = await applyPackageClaimPlans(claimPlans, client, applyOptions);
+            if (!options.json) {
+              printPackageClaimApplySummary(claimResults, io);
+            }
+          }
+        }
       }
 
       const checkedPlans = await checkTrustedPublisherPlans(plans, client, applyOptions);
       if (options.audit) {
-        writeMigrationReportIfRequested({ checkedPlans, discovery, plans }, options, io);
+        writeMigrationReportIfRequested(
+          { checkedPlans, claimPlans, discovery, plans },
+          options,
+          io,
+        );
         if (options.json) {
-          printJsonReport({ checkedPlans, discovery, mode: "audit", plans }, io);
+          printJsonReport({ checkedPlans, claimPlans, discovery, mode: "audit", plans }, io);
         } else {
           printNpmCheckSummary(checkedPlans, io);
         }
-        process.exitCode = determineAuditExitCode(checkedPlans);
+        process.exitCode = determineAuditExitCode(checkedPlans, claimPlans);
         return;
       }
 
@@ -177,12 +236,23 @@ export function createProgram(
       const mutableCount = checkedPlans.filter((checkedPlan) => willApply(checkedPlan)).length;
       if (mutableCount === 0) {
         writeMigrationReportIfRequested(
-          { checkedPlans, discovery, plans, results: [] },
+          { checkedPlans, claimPlans, claimResults, discovery, plans, results: [] },
           options,
           io,
         );
         if (options.json) {
-          printJsonReport({ checkedPlans, discovery, mode: "apply", plans, results: [] }, io);
+          printJsonReport(
+            {
+              checkedPlans,
+              claimPlans,
+              claimResults,
+              discovery,
+              mode: claimMutationDeferred ? "plan" : "apply",
+              plans,
+              results: [],
+            },
+            io,
+          );
         } else {
           io.stdout.write("\nNo high-confidence npm changes to apply.\n");
         }
@@ -191,23 +261,56 @@ export function createProgram(
 
       if (!shouldApply(options, env)) {
         if (options.json) {
-          writeMigrationReportIfRequested({ checkedPlans, discovery, plans }, options, io);
-          printJsonReport({ checkedPlans, discovery, mode: "plan", plans }, io);
+          writeMigrationReportIfRequested(
+            { checkedPlans, claimPlans, claimResults, discovery, plans },
+            options,
+            io,
+          );
+          printJsonReport(
+            {
+              checkedPlans,
+              claimPlans,
+              claimResults,
+              discovery,
+              mode: "plan",
+              plans,
+            },
+            io,
+          );
           return;
         }
 
         const confirmed = await confirmApply(mutableCount, io);
         if (!confirmed) {
           io.stdout.write("\nNo npm changes made.\n");
-          writeMigrationReportIfRequested({ checkedPlans, discovery, plans }, options, io);
+          writeMigrationReportIfRequested(
+            { checkedPlans, claimPlans, claimResults, discovery, plans },
+            options,
+            io,
+          );
           return;
         }
       }
 
       const results = await applyCheckedTrustedPublisherPlans(checkedPlans, client, applyOptions);
-      writeMigrationReportIfRequested({ checkedPlans, discovery, plans, results }, options, io);
+      writeMigrationReportIfRequested(
+        { checkedPlans, claimPlans, claimResults, discovery, plans, results },
+        options,
+        io,
+      );
       if (options.json) {
-        printJsonReport({ checkedPlans, discovery, mode: "apply", plans, results }, io);
+        printJsonReport(
+          {
+            checkedPlans,
+            claimPlans,
+            claimResults,
+            discovery,
+            mode: "apply",
+            plans,
+            results,
+          },
+          io,
+        );
       } else {
         printApplySummary(results, io);
       }
@@ -219,6 +322,7 @@ export function createProgram(
 interface CliOptions {
   readonly audit?: boolean;
   readonly both?: boolean;
+  readonly claim?: boolean;
   readonly delayMs: number;
   readonly dryRun?: boolean;
   readonly json?: boolean;
@@ -328,9 +432,29 @@ function printNpmCheckSummary(checkedPlans: readonly CheckedPlan[], io: CliIo): 
   }
 }
 
+function printPackageClaimSummary(claimPlans: readonly PackageClaimPlan[], io: CliIo): void {
+  io.stdout.write("\nPackage claim check:\n");
+
+  for (const claimPlan of claimPlans) {
+    const name = claimPlan.packageName ?? claimPlan.package.name ?? claimPlan.package.relativePath;
+    io.stdout.write(`  ${claimPlan.action}: ${name}\n`);
+    io.stdout.write(`    package exists: ${formatClaimPackageExists(claimPlan)}\n`);
+    io.stdout.write(`    placeholder version: ${claimPlan.version}\n`);
+    io.stdout.write(`    dist-tag: ${claimPlan.tag}\n`);
+    if (claimPlan.action === "claim") {
+      io.stdout.write(`    command: ${claimPlan.command}\n`);
+    }
+    for (const reason of claimPlan.reasons) {
+      io.stdout.write(`    reason: ${reason}\n`);
+    }
+  }
+}
+
 function printJsonReport(
   input: {
     readonly checkedPlans?: readonly CheckedPlan[];
+    readonly claimPlans?: readonly PackageClaimPlan[];
+    readonly claimResults?: readonly PackageClaimResult[];
     readonly discovery: WorkspaceDiscovery;
     readonly mode: "apply" | "audit" | "dry-run" | "plan";
     readonly plans: ReturnType<typeof buildTrustedPublisherPlans>;
@@ -342,12 +466,20 @@ function printJsonReport(
     `${JSON.stringify(
       {
         checkedPlans: input.checkedPlans ?? [],
+        claimPlans: input.claimPlans ?? [],
+        claimResults: input.claimResults ?? [],
         discovery: input.discovery,
         mode: input.mode,
         plans: input.plans,
         results: input.results ?? [],
         schemaVersion: 1,
-        summary: createReportSummary(input.plans, input.checkedPlans, input.results),
+        summary: createReportSummary(
+          input.plans,
+          input.checkedPlans,
+          input.results,
+          input.claimPlans,
+          input.claimResults,
+        ),
       },
       null,
       2,
@@ -380,6 +512,8 @@ function createReportSummary(
   plans: ReturnType<typeof buildTrustedPublisherPlans>,
   checkedPlans: readonly CheckedPlan[] | undefined,
   results: readonly ApplyResult[] | undefined,
+  claimPlans: readonly PackageClaimPlan[] | undefined,
+  claimResults: readonly PackageClaimResult[] | undefined,
 ): Record<string, number> {
   const summary: Record<string, number> = {
     applyBlocked: 0,
@@ -391,6 +525,12 @@ function createReportSummary(
     checkCreate: 0,
     checkReplace: 0,
     checkSkip: 0,
+    claimBlocked: 0,
+    claimClaimed: 0,
+    claimDryRun: 0,
+    claimFailed: 0,
+    claimNeeded: 0,
+    claimSkipped: 0,
     highConfidence: plans.filter((plan) => plan.confidence === "high").length,
     lowConfidence: plans.filter((plan) => plan.confidence === "low").length,
     mediumConfidence: plans.filter((plan) => plan.confidence === "medium").length,
@@ -407,14 +547,32 @@ function createReportSummary(
       (summary[`apply${capitalize(result.status)}`] ?? 0) + 1;
   }
 
+  for (const claimPlan of claimPlans ?? []) {
+    if (claimPlan.action === "claim") {
+      summary.claimNeeded = (summary.claimNeeded ?? 0) + 1;
+    } else {
+      summary[`claim${capitalize(claimPlan.action)}`] =
+        (summary[`claim${capitalize(claimPlan.action)}`] ?? 0) + 1;
+    }
+  }
+
+  for (const claimResult of claimResults ?? []) {
+    summary[`claim${capitalize(claimResult.status)}`] =
+      (summary[`claim${capitalize(claimResult.status)}`] ?? 0) + 1;
+  }
+
   return summary;
 }
 
-function determineAuditExitCode(checkedPlans: readonly CheckedPlan[]): number {
+function determineAuditExitCode(
+  checkedPlans: readonly CheckedPlan[],
+  claimPlans: readonly PackageClaimPlan[] = [],
+): number {
   if (
     checkedPlans.some(
       (checkedPlan) =>
-        checkedPlan.action === "blocked" ||
+        (checkedPlan.action === "blocked" &&
+          !hasClaimableMissingPackage(checkedPlan, claimPlans)) ||
         (checkedPlan.action === "skip" && !checkedPlan.matchingTrust),
     )
   ) {
@@ -422,6 +580,7 @@ function determineAuditExitCode(checkedPlans: readonly CheckedPlan[]): number {
   }
 
   if (
+    claimPlans.some((claimPlan) => claimPlan.action === "claim") ||
     checkedPlans.some(
       (checkedPlan) => checkedPlan.action === "create" || checkedPlan.action === "replace",
     )
@@ -448,12 +607,53 @@ function formatPackageExists(checkedPlan: CheckedPlan): string {
   return "no";
 }
 
+function formatClaimPackageExists(claimPlan: PackageClaimPlan): string {
+  if (claimPlan.packageExists === undefined) {
+    return "not checked";
+  }
+
+  return claimPlan.packageExists ? "yes" : "no";
+}
+
+function hasClaimableMissingPackage(
+  checkedPlan: CheckedPlan,
+  claimPlans: readonly PackageClaimPlan[],
+): boolean {
+  const name = checkedPlan.plan.package.name;
+  if (!name || !checkedPlan.reasons.includes("package does not exist on npm")) {
+    return false;
+  }
+
+  return claimPlans.some(
+    (claimPlan) => claimPlan.packageName === name && claimPlan.action === "claim",
+  );
+}
+
 function isPreRegistryReason(reason: string): boolean {
   return (
     reason === "package name is required" ||
     reason === "npm trust command could not be rendered" ||
     reason.startsWith("plan confidence is ")
   );
+}
+
+function printPackageClaimApplySummary(results: readonly PackageClaimResult[], io: CliIo): void {
+  io.stdout.write("\nPackage claim summary:\n");
+
+  for (const result of results) {
+    const name =
+      result.claimPlan.packageName ??
+      result.claimPlan.package.name ??
+      result.claimPlan.package.relativePath;
+    io.stdout.write(`  ${result.status}: ${name}\n`);
+
+    for (const reason of result.claimPlan.reasons) {
+      io.stdout.write(`    reason: ${reason}\n`);
+    }
+    if (result.error) {
+      io.stdout.write(`    error: ${result.error}\n`);
+    }
+  }
 }
 
 function printApplySummary(results: readonly ApplyResult[], io: CliIo): void {
@@ -490,6 +690,21 @@ async function confirmApply(mutableCount: number, io: CliIo): Promise<boolean> {
   io.stdout.write(
     `\nApply ${mutableCount} high-confidence npm change${plural(mutableCount)}? [y/N] `,
   );
+  const readline = createInterface({ input: stdin, terminal: false });
+  const answer = await readline.question("");
+  readline.close();
+
+  return /^(?:y|yes)$/i.test(answer.trim());
+}
+
+async function confirmPackageClaims(mutableCount: number, io: CliIo): Promise<boolean> {
+  const stdin = io.stdin ?? process.stdin;
+  if (stdin.isTTY !== true) {
+    io.stdout.write("\nNo interactive input detected. Use --yes to claim missing packages.\n");
+    return false;
+  }
+
+  io.stdout.write(`\nClaim ${mutableCount} missing npm package${plural(mutableCount)}? [y/N] `);
   const readline = createInterface({ input: stdin, terminal: false });
   const answer = await readline.question("");
   readline.close();

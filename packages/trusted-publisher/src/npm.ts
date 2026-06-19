@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import type { TrustedPublisherPlan, TrustPermissions } from "./planning.js";
@@ -6,11 +9,17 @@ import type { TrustedPublisherPlan, TrustPermissions } from "./planning.js";
 const execFileAsync = promisify(execFile);
 
 export interface NpmClient {
+  readonly claimPackage: (packageName: string, options?: NpmPackageClaimOptions) => Promise<void>;
   readonly createTrust: (plan: TrustedPublisherPlan) => Promise<void>;
   readonly getVersion: () => Promise<string>;
   readonly listTrust: (packageName: string) => Promise<ExistingTrust[]>;
   readonly packageExists: (packageName: string) => Promise<boolean>;
   readonly revokeTrust: (packageName: string, trustId: string) => Promise<void>;
+}
+
+export interface NpmPackageClaimOptions {
+  readonly tag?: string;
+  readonly version?: string;
 }
 
 export interface ExistingTrust {
@@ -36,6 +45,28 @@ interface CommandError extends Error {
 
 export function createNpmCliClient(options: NpmClientOptions = {}): NpmClient {
   return {
+    async claimPackage(packageName, claimOptions = {}) {
+      const placeholderDir = createPlaceholderPackageDirectory(
+        packageName,
+        claimOptions.version ?? "0.0.0",
+      );
+
+      try {
+        await runNpm([
+          "publish",
+          placeholderDir,
+          "--access",
+          "public",
+          "--tag",
+          claimOptions.tag ?? "trusted-publisher-claim",
+          "--ignore-scripts",
+          ...registryArgs(options.registry),
+        ]);
+      } finally {
+        rmSync(placeholderDir, { force: true, recursive: true });
+      }
+    },
+
     async createTrust(plan) {
       if (!plan.trustArgs) {
         throw new Error(
@@ -238,6 +269,25 @@ function isNotFoundError(error: unknown): boolean {
 
 function normalizeEnvironment(value: string | undefined): string {
   return value ?? "";
+}
+
+function createPlaceholderPackageDirectory(packageName: string, version: string): string {
+  const directory = mkdtempSync(join(tmpdir(), "trusted-publisher-claim-"));
+  const manifest = {
+    description: "Placeholder package claimed before configuring npm trusted publishing.",
+    files: ["README.md"],
+    name: packageName,
+    private: false,
+    version,
+  };
+
+  writeFileSync(join(directory, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(
+    join(directory, "README.md"),
+    `# ${packageName}\n\nThis placeholder package was published to claim the npm package name before configuring trusted publishing.\n`,
+  );
+
+  return directory;
 }
 
 function readString(value: unknown): string | undefined {

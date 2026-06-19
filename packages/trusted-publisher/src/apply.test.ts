@@ -146,6 +146,9 @@ function createClient(
 
   return {
     calls,
+    async claimPackage(packageName) {
+      calls.push(`claim:${packageName}`);
+    },
     async createTrust(plan) {
       calls.push(`create:${plan.package.name ?? plan.package.relativePath}`);
       if (plan.package.name === options.failCreateFor) {
