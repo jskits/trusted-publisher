@@ -98,6 +98,45 @@ trusted-publisher --claim --yes
 trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
 ```
 
+## Remote Source Mode
+
+Use `--source` when the repository is not already checked out locally:
+
+```sh
+npx -y trusted-publisher --source https://github.com/owner/repo
+```
+
+The source value may be a GitHub URL, `github:owner/repo`, or `owner/repo`. The CLI performs a
+shallow clone with blob filtering into a temporary directory, runs the same package and workflow
+analysis used for local repositories, then removes the temporary clone before exiting.
+
+When `--source` is used without `--repo`, the trusted publisher repository defaults to the
+`owner/repo` parsed from the source. Use `--repo` only when npm should trust a different GitHub
+repository than the source repository being scanned.
+
+Public repositories work without credentials. Private repositories depend on the local `git`
+configuration and credentials available to the process.
+
+## Scope Bulk Mode
+
+Use `--scope` when the packages to configure are already published under an npm scope but are not
+necessarily present in the current workspace:
+
+```sh
+trusted-publisher --scope @scope --repo owner/repo --workflow release.yml --yes
+```
+
+Scope mode asks npm for public packages matching the scope, converts them into registry-derived
+package entries, and then runs the same plan, check, diff, and apply pipeline. Because these
+packages may not exist in the local checkout, explicitly passing `--repo` and `--workflow` is the
+most predictable form.
+
+For large scopes, tune the search limit:
+
+```sh
+trusted-publisher --scope @scope --scope-limit 500 --repo owner/repo --workflow release.yml
+```
+
 ## Safety model
 
 - `--yes` and `npx -y` apply only high-confidence plans.
