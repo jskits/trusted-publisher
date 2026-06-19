@@ -128,7 +128,7 @@ export function createProgram(
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
     .option("--publish-only", "allow npm publish only")
     .option("--stage-only", "allow npm stage publish only")
-    .option("--both", "allow npm publish and npm stage publish")
+    .option("--both", "allow npm publish and npm stage publish (default)")
     .action(async (options: CliOptions) => {
       let sourceDiscovery: SourceDiscovery | undefined;
 
@@ -432,7 +432,7 @@ function resolvePermissionMode(options: CliOptions): PermissionMode {
     return "stage";
   }
 
-  return "infer";
+  return "both";
 }
 
 const defaultServices: CliServices = {

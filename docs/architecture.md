@@ -23,7 +23,7 @@ there and the module that owns each stage.
   topology.ts ── resolvePublishTopology() ── map each package to its publishing workflow
                                                   │
                                                   ▼
-  planning.ts ── buildTrustedPublisherPlans() ── per package: select workflow, infer
+  planning.ts ── buildTrustedPublisherPlans() ── per package: select workflow, resolve
         permissions + environment, render `npm trust` args, score, assign confidence
                                                   │
                               (--scope replaces the package set first, via scope.ts)

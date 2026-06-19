@@ -56,7 +56,7 @@ export function buildTrustedPublisherPlans(
       ? selectWorkflow(discovery.workflows, options.workflowFile)
       : selectPackageWorkflow(discovery.workflows, topology.mappings, pkg);
 
-    return buildPackagePlan(pkg, repository, workflowSelection, options.permissionMode ?? "infer");
+    return buildPackagePlan(pkg, repository, workflowSelection, options.permissionMode ?? "both");
   });
 }
 

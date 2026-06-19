@@ -55,12 +55,12 @@ describe("trusted publisher planning", () => {
     expect(plans).toHaveLength(1);
     expect(plans[0]).toMatchObject({
       command:
-        'npm trust github "@scope/a" --repo "jskits/loggerjs" --file "release.yml" --env npm --allow-publish --yes',
+        'npm trust github "@scope/a" --repo "jskits/loggerjs" --file "release.yml" --env npm --allow-publish --allow-stage-publish --yes',
       confidence: "high",
       environment: "npm",
       permissions: {
         allowPublish: true,
-        allowStagePublish: false,
+        allowStagePublish: true,
       },
       repository: "jskits/loggerjs",
       score: 95,
@@ -88,6 +88,19 @@ describe("trusted publisher planning", () => {
       allowStagePublish: true,
     });
     expect(plans[0]?.command).toContain("--allow-stage-publish");
+  });
+
+  it("supports explicit publish-only permissions", () => {
+    const plans = buildTrustedPublisherPlans(createDiscovery([publishablePackage]), {
+      permissionMode: "publish",
+    });
+
+    expect(plans[0]?.permissions).toEqual({
+      allowPublish: true,
+      allowStagePublish: false,
+    });
+    expect(plans[0]?.command).toContain("--allow-publish");
+    expect(plans[0]?.command).not.toContain("--allow-stage-publish");
   });
 
   it("marks ambiguous publishing workflows as low confidence", () => {

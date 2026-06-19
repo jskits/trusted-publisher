@@ -45,19 +45,24 @@ For each package the planner picks a workflow:
      `publishing workflow uses an indirect release tool`;
    - more than one indirect workflow → `multiple indirect publishing workflows detected`.
 
-## Permission inference
+## Permission mode
 
-The `--publish-only`, `--stage-only`, and `--both` flags force the permission set. Without them the
-mode is `infer`:
+The CLI default is `both`, so generated commands include both `--allow-publish` and
+`--allow-stage-publish`. This matches npm's common trusted publisher setup and avoids requiring a
+second migration when a package later adopts staged publishing.
 
-- If a candidate was selected, its command decides: `npm stage publish` → `--allow-stage-publish`,
-  any other publish command → `--allow-publish`. Reusable-workflow candidates infer nothing.
+The `--publish-only`, `--stage-only`, and `--both` flags force the permission set. Programmatic
+callers can still pass `permissionMode: "infer"` to derive the narrowest permission from workflow
+signals:
+
+- If a candidate was selected, its command decides: `npm stage publish` → stage publish only, any
+  other publish command → publish only. Reusable-workflow candidates infer nothing.
 - Otherwise the workflow signals decide: `npmStagePublish` → stage; any of `npmPublish`,
   `packageManagerPublish`, `changesetsAction`, `semanticRelease`, `lernaPublish`, `nxReleasePublish`
   → publish.
 
 If neither permission can be inferred, the plan records `no trusted publishing action could be
-inferred` and is capped at low/medium confidence.
+inferred` and is capped at low/medium confidence. This only applies to explicit `infer` mode.
 
 ## Scoring
 
@@ -77,7 +82,7 @@ and is normalized into `[0, 100]`:
 | no candidate, but the selected workflow has an indirect publish signal | +5    |
 | publishing job/workflow has `id-token: write`                          | +15   |
 | `id-token: write` is missing                                           | −25   |
-| a trusted-publisher permission could be inferred                       | +10   |
+| a trusted-publisher permission is available                            | +10   |
 
 After the additive signals, several caps are applied:
 
@@ -97,9 +102,9 @@ After the additive signals, several caps are applied:
 | < 50  | `low`      | no — printed with reasons      |
 
 In practice a `high` plan requires: a publishable, named package; a resolved GitHub repository; a
-selected workflow with a **direct** publish command; `id-token: write` present; an inferred
-permission; and no outstanding reasons. Anything ambiguous or indirect lands in `medium`/`low` and
-is left for a human to review or to force with explicit flags.
+selected workflow with a **direct** publish command; `id-token: write` present; a resolved permission
+mode; and no outstanding reasons. Anything ambiguous or indirect lands in `medium`/`low` and is left
+for a human to review or to force with explicit flags.
 
 ## explain vs. reasons
 

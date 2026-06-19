@@ -44,8 +44,9 @@ authorized:
    candidates with evidence.
 2. **Map** — build the publish topology that links each package to the workflow that releases it
    (global, per-package, hybrid, or conflicting).
-3. **Plan & score** — select the right workflow per package, infer publish/stage permissions and
-   environment, render the exact `npm trust github` command, and assign a confidence tier.
+3. **Plan & score** — select the right workflow per package, default to publish + stage-publish
+   trust permissions, infer the environment, render the exact `npm trust github` command, and assign
+   a confidence tier.
 4. **Check** — compare each plan against live npm state: already configured, needs creating, drifts
    from an existing record, or is blocked.
 5. **Apply** — run `npm trust` serially and throttled, only for high-confidence plans, only when

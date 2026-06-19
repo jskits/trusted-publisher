@@ -56,7 +56,7 @@ const discovery = discoverWorkspace(process.cwd());
 ```ts
 const topology = resolvePublishTopology(discovery);
 const plans = buildTrustedPublisherPlans(discovery, {
-  permissionMode: "infer", // "infer" | "publish" | "stage" | "both"
+  permissionMode: "both", // default; also supports "infer" | "publish" | "stage"
   repository: "owner/repo", // optional override
   workflowFile: "release.yml", // optional override
 });
