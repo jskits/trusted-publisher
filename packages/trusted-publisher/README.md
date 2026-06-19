@@ -36,6 +36,7 @@ trusted-publisher --replace --yes
 - Existing matching trusted publishers are skipped.
 - Existing differing trusted publishers are blocked unless `--replace` is set.
 - Mutations are serial and wait 2 seconds by default between npm trust changes.
+- Per-package npm failures are reported as `failed` in the final summary.
 - Private packages, restricted packages, missing package names, and non-npm registries are skipped.
 
 ## Options

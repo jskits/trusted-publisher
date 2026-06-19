@@ -285,6 +285,9 @@ function printApplySummary(results: readonly ApplyResult[], io: CliIo): void {
     for (const reason of result.checkedPlan.reasons) {
       io.stdout.write(`    reason: ${reason}\n`);
     }
+    if (result.error) {
+      io.stdout.write(`    error: ${result.error}\n`);
+    }
   }
 }
 

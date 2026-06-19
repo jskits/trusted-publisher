@@ -3,7 +3,7 @@ import { trustMatchesPlan } from "./npm.js";
 import type { TrustedPublisherPlan } from "./planning.js";
 
 export type CheckedPlanAction = "blocked" | "create" | "replace" | "skip";
-export type ApplyStatus = "blocked" | "created" | "dry-run" | "replaced" | "skipped";
+export type ApplyStatus = "blocked" | "created" | "dry-run" | "failed" | "replaced" | "skipped";
 
 export interface CheckOptions {
   readonly replace?: boolean;
@@ -25,6 +25,7 @@ export interface CheckedPlan {
 
 export interface ApplyResult {
   readonly checkedPlan: CheckedPlan;
+  readonly error?: string;
   readonly status: ApplyStatus;
 }
 
@@ -61,15 +62,31 @@ export async function applyCheckedTrustedPublisherPlans(
     }
 
     // eslint-disable-next-line no-await-in-loop -- npm trust changes must be applied serially.
-    const result = await applyCheckedPlan(checkedPlan, client, options);
+    const result = await applyCheckedPlanSafely(checkedPlan, client, options);
     results.push(result);
 
-    if (result.status === "created" || result.status === "replaced") {
+    if (result.status === "created" || result.status === "failed" || result.status === "replaced") {
       alreadyMutated = true;
     }
   }
 
   return results;
+}
+
+async function applyCheckedPlanSafely(
+  checkedPlan: CheckedPlan,
+  client: NpmClient,
+  options: ApplyOptions,
+): Promise<ApplyResult> {
+  try {
+    return await applyCheckedPlan(checkedPlan, client, options);
+  } catch (error) {
+    return {
+      checkedPlan,
+      error: error instanceof Error ? error.message : String(error),
+      status: "failed",
+    };
+  }
 }
 
 async function checkTrustedPublisherPlan(

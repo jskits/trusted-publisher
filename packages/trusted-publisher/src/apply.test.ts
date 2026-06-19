@@ -100,10 +100,37 @@ describe("trusted publisher apply flow", () => {
     );
     expect(client.calls).toEqual([]);
   });
+
+  it("records npm command failures and continues with later packages", async () => {
+    const client = createClient({ failCreateFor: "@scope/a" });
+    const results = await applyTrustedPublisherPlans(
+      [
+        createPlan(),
+        createPlan({
+          package: {
+            directory: "/repo/packages/b",
+            name: "@scope/b",
+            private: false,
+            publishable: true,
+            relativePath: "packages/b",
+            skipReasons: [],
+            version: "1.0.0",
+          },
+        }),
+      ],
+      client,
+      { delayMs: 0 },
+    );
+
+    expect(results.map((result) => result.status)).toEqual(["failed", "created"]);
+    expect(results[0]?.error).toBe("create failed");
+    expect(client.calls).toContain("create:@scope/b");
+  });
 });
 
 function createClient(
   options: {
+    readonly failCreateFor?: string;
     readonly packageExists?: boolean;
     readonly trusts?: readonly ExistingTrust[];
   } = {},
@@ -114,6 +141,9 @@ function createClient(
     calls,
     async createTrust(plan) {
       calls.push(`create:${plan.package.name ?? plan.package.relativePath}`);
+      if (plan.package.name === options.failCreateFor) {
+        throw new Error("create failed");
+      }
     },
     async getVersion() {
       calls.push("getVersion");
