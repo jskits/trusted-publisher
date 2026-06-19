@@ -15,6 +15,7 @@ import {
 import { discoverWorkspace, type WorkspaceDiscovery } from "./discovery.js";
 import { createNpmCliClient, type NpmClient, type NpmClientOptions } from "./npm.js";
 import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
+import { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
 
 export {
   applyCheckedTrustedPublisherPlans,
@@ -26,6 +27,7 @@ export { discoverRepository, findRepoRoot, parseGitHubRepository } from "./git.j
 export { createNpmCliClient, parseTrustList, trustMatchesPlan } from "./npm.js";
 export { discoverPackages, readWorkspacePatterns } from "./packages.js";
 export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
+export { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
 export { discoverGitHubWorkflows } from "./workflows.js";
 
 export interface CliIo {
@@ -153,6 +155,14 @@ export function createProgram(
       }
 
       const client = services.createNpmClient(clientOptions);
+      const prerequisiteIssues = checkRuntimePrerequisites({
+        nodeVersion: process.versions.node,
+        npmVersion: await client.getVersion(),
+      });
+      if (prerequisiteIssues.length > 0) {
+        throw new Error(formatRuntimePrerequisiteIssues(prerequisiteIssues));
+      }
+
       const checkedPlans = await checkTrustedPublisherPlans(plans, client, applyOptions);
       printNpmCheckSummary(checkedPlans, io);
 

@@ -7,6 +7,7 @@ const execFileAsync = promisify(execFile);
 
 export interface NpmClient {
   readonly createTrust: (plan: TrustedPublisherPlan) => Promise<void>;
+  readonly getVersion: () => Promise<string>;
   readonly listTrust: (packageName: string) => Promise<ExistingTrust[]>;
   readonly packageExists: (packageName: string) => Promise<boolean>;
   readonly revokeTrust: (packageName: string, trustId: string) => Promise<void>;
@@ -43,6 +44,11 @@ export function createNpmCliClient(options: NpmClientOptions = {}): NpmClient {
       }
 
       await runNpm([...plan.trustArgs.slice(1), ...registryArgs(options.registry)]);
+    },
+
+    async getVersion() {
+      const { stdout } = await runNpm(["--version"]);
+      return stdout.trim();
     },
 
     async listTrust(packageName) {

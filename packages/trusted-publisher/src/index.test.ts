@@ -75,6 +75,7 @@ describe("trusted-publisher CLI", () => {
     expect(stdout.toString()).toContain("Npm registry check:");
     expect(stdout.toString()).toContain("Apply summary:");
     expect(client.calls).toEqual([
+      "getVersion",
       "packageExists:@scope/a",
       "listTrust:@scope/a",
       "create:@scope/a",
@@ -116,7 +117,23 @@ describe("trusted-publisher CLI", () => {
 
     expect(stderr.toString()).toBe("");
     expect(stdout.toString()).toContain("No interactive input detected.");
-    expect(client.calls).toEqual(["packageExists:@scope/a", "listTrust:@scope/a"]);
+    expect(client.calls).toEqual(["getVersion", "packageExists:@scope/a", "listTrust:@scope/a"]);
+  });
+
+  it("blocks unsupported npm CLI versions before registry checks", async () => {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const client = createClient({ npmVersion: "10.9.0" });
+
+    await runCli({
+      argv: ["--yes"],
+      env: {},
+      io: { stderr, stdout },
+      services: createServices(client),
+    });
+
+    expect(stderr.toString()).toContain("npm CLI >= 11.5.1 is required; found 10.9.0.");
+    expect(client.calls).toEqual(["getVersion"]);
   });
 
   it("rejects conflicting permission flags", async () => {
@@ -139,15 +156,22 @@ function createServices(client: NpmClient): Partial<CliServices> {
   };
 }
 
-function createClient(options: { readonly trusts?: readonly ExistingTrust[] } = {}): NpmClient & {
-  readonly calls: string[];
-} {
+function createClient(
+  options: {
+    readonly npmVersion?: string;
+    readonly trusts?: readonly ExistingTrust[];
+  } = {},
+): NpmClient & { readonly calls: string[] } {
   const calls: string[] = [];
 
   return {
     calls,
     async createTrust(plan) {
       calls.push(`create:${plan.package.name ?? plan.package.relativePath}`);
+    },
+    async getVersion() {
+      calls.push("getVersion");
+      return options.npmVersion ?? "11.5.1";
     },
     async listTrust(packageName) {
       calls.push(`listTrust:${packageName}`);

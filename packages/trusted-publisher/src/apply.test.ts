@@ -115,6 +115,10 @@ function createClient(
     async createTrust(plan) {
       calls.push(`create:${plan.package.name ?? plan.package.relativePath}`);
     },
+    async getVersion() {
+      calls.push("getVersion");
+      return "11.5.1";
+    },
     async listTrust(packageName) {
       calls.push(`listTrust:${packageName}`);
       return [...(options.trusts ?? [])];
