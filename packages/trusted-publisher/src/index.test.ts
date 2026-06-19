@@ -46,8 +46,9 @@ describe("trusted-publisher CLI", () => {
     });
 
     expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("trusted-publisher plan");
-    expect(stdout.toString()).toContain("Dry run: no npm changes will be made.");
+    const output = stripAnsi(stdout.toString());
+    expect(output).toContain("trusted-publisher plan");
+    expect(output).toContain("Dry run: no npm changes will be made.");
   });
 
   it("prints the version without treating Commander exit as a failure", async () => {
@@ -451,4 +452,8 @@ function createDiscovery(
 
 function createTtyInput(text: string): Readable & { readonly isTTY: true } {
   return Object.assign(Readable.from([text]), { isTTY: true as const });
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"), "");
 }
