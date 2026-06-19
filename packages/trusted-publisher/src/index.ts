@@ -6,10 +6,12 @@ import { Command, CommanderError } from "commander";
 import pc from "picocolors";
 
 import { discoverWorkspace } from "./discovery.js";
+import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
 
 export { discoverWorkspace } from "./discovery.js";
 export { discoverRepository, findRepoRoot, parseGitHubRepository } from "./git.js";
 export { discoverPackages, readWorkspacePatterns } from "./packages.js";
+export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
 export { discoverGitHubWorkflows } from "./workflows.js";
 
 export interface CliIo {
@@ -52,27 +54,90 @@ export function createProgram(io: CliIo = defaultIo): Command {
     .description("Bulk configure npm trusted publishing for GitHub monorepos.")
     .version(readPackageVersion())
     .option("--dry-run", "print the planned npm trust commands without changing npm")
+    .option("--repo <owner/repo>", "override the detected GitHub repository")
+    .option("--workflow <file>", "override the detected GitHub Actions workflow filename")
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
-    .action((options: { readonly dryRun?: boolean; readonly yes?: boolean }) => {
+    .option("--publish-only", "allow npm publish only")
+    .option("--stage-only", "allow npm stage publish only")
+    .option("--both", "allow npm publish and npm stage publish")
+    .action((options: CliOptions) => {
+      const permissionMode = resolvePermissionMode(options);
       const discovery = discoverWorkspace();
+      const planningOptions: {
+        permissionMode: PermissionMode;
+        repository?: string;
+        workflowFile?: string;
+      } = { permissionMode };
+      if (options.repo) {
+        planningOptions.repository = options.repo;
+      }
+      if (options.workflow) {
+        planningOptions.workflowFile = options.workflow;
+      }
+      const plans = buildTrustedPublisherPlans(discovery, planningOptions);
       const publishablePackages = discovery.packages.filter((pkg) => pkg.publishable);
       const skippedPackages = discovery.packages.filter((pkg) => !pkg.publishable);
 
-      io.stdout.write(`${pc.bold("trusted-publisher")} scan\n`);
+      io.stdout.write(`${pc.bold("trusted-publisher")} plan\n`);
       io.stdout.write(`Repository root: ${discovery.repository.rootDir}\n`);
       io.stdout.write(
-        `GitHub repository: ${discovery.repository.githubRepository ?? "not detected"}\n`,
+        `GitHub repository: ${options.repo ?? discovery.repository.githubRepository ?? "not detected"}\n`,
       );
       io.stdout.write(`Publishable packages: ${publishablePackages.length}\n`);
       io.stdout.write(`Skipped packages: ${skippedPackages.length}\n`);
       io.stdout.write(`GitHub workflows: ${discovery.workflows.length}\n`);
 
+      for (const plan of plans) {
+        const name = plan.package.name ?? plan.package.relativePath;
+        io.stdout.write(`\n${pc.bold(name)} [${plan.confidence}]\n`);
+        if (plan.workflowFile) {
+          io.stdout.write(`  workflow: ${plan.workflowFile}\n`);
+        }
+        if (plan.command) {
+          io.stdout.write(`  command: ${plan.command}\n`);
+        }
+        for (const reason of plan.reasons) {
+          io.stdout.write(`  reason: ${reason}\n`);
+        }
+      }
+
       if (options.dryRun) {
-        io.stdout.write("Dry run: no npm changes will be made.\n");
+        io.stdout.write("\nDry run: no npm changes will be made.\n");
       }
     });
 
   return program;
+}
+
+interface CliOptions {
+  readonly both?: boolean;
+  readonly dryRun?: boolean;
+  readonly publishOnly?: boolean;
+  readonly repo?: string;
+  readonly stageOnly?: boolean;
+  readonly workflow?: string;
+  readonly yes?: boolean;
+}
+
+function resolvePermissionMode(options: CliOptions): PermissionMode {
+  const selected = [options.both, options.publishOnly, options.stageOnly].filter(Boolean).length;
+  if (selected > 1) {
+    throw new Error("Choose only one of --publish-only, --stage-only, or --both.");
+  }
+
+  if (options.both) {
+    return "both";
+  }
+
+  if (options.publishOnly) {
+    return "publish";
+  }
+
+  if (options.stageOnly) {
+    return "stage";
+  }
+
+  return "infer";
 }
 
 export async function runCli(options: RunCliOptions = {}): Promise<void> {

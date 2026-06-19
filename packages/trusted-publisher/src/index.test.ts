@@ -40,7 +40,7 @@ describe("trusted-publisher CLI", () => {
     });
 
     expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toContain("trusted-publisher scan");
+    expect(stdout.toString()).toContain("trusted-publisher plan");
     expect(stdout.toString()).toContain("Dry run: no npm changes will be made.");
   });
 
