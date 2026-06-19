@@ -15,9 +15,6 @@ catalogs:
     '@commitlint/config-conventional':
       specifier: 21.0.2
       version: 21.0.2
-    commander:
-      specifier: 15.0.0
-      version: 15.0.0
     commitizen:
       specifier: 4.3.2
       version: 4.3.2
@@ -33,9 +30,6 @@ catalogs:
     oxlint:
       specifier: 1.70.0
       version: 1.70.0
-    picocolors:
-      specifier: 1.1.1
-      version: 1.1.1
     publint:
       specifier: 0.3.21
       version: 0.3.21
@@ -45,12 +39,6 @@ catalogs:
     simple-git-hooks:
       specifier: 2.13.1
       version: 2.13.1
-    tinyexec:
-      specifier: 1.2.4
-      version: 1.2.4
-    tsdown:
-      specifier: 0.22.3
-      version: 0.22.3
     turbo:
       specifier: 2.9.18
       version: 2.9.18
@@ -60,12 +48,6 @@ catalogs:
     vitest:
       specifier: 4.1.9
       version: 4.1.9
-    yaml:
-      specifier: 2.9.0
-      version: 2.9.0
-    zod:
-      specifier: 4.4.3
-      version: 4.4.3
 
 overrides:
   '@types/node': 22.19.21
@@ -123,35 +105,35 @@ importers:
   packages/trusted-publisher:
     dependencies:
       commander:
-        specifier: 'catalog:'
+        specifier: 15.0.0
         version: 15.0.0
       picocolors:
-        specifier: 'catalog:'
+        specifier: 1.1.1
         version: 1.1.1
       tinyexec:
-        specifier: 'catalog:'
+        specifier: 1.2.4
         version: 1.2.4
       yaml:
-        specifier: 'catalog:'
+        specifier: 2.9.0
         version: 2.9.0
       zod:
-        specifier: 'catalog:'
+        specifier: 4.4.3
         version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: 22.19.21
         version: 22.19.21
       publint:
-        specifier: 'catalog:'
+        specifier: 0.3.21
         version: 0.3.21
       tsdown:
-        specifier: 'catalog:'
+        specifier: 0.22.3
         version: 0.22.3(publint@0.3.21)(typescript@6.0.3)
       typescript:
-        specifier: 'catalog:'
+        specifier: 6.0.3
         version: 6.0.3
       vitest:
-        specifier: 'catalog:'
+        specifier: 4.1.9
         version: 4.1.9(@types/node@22.19.21)(vite@8.0.16(@types/node@22.19.21)(jiti@2.6.1)(yaml@2.9.0))
 
 packages:

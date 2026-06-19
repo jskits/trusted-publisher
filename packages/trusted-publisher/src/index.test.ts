@@ -54,6 +54,7 @@ describe("trusted-publisher CLI", () => {
   it("prints the version without treating Commander exit as a failure", async () => {
     const stdout = new MemoryWritable();
     const stderr = new MemoryWritable();
+    const version = readPackageVersion();
 
     await runCli({
       argv: ["--version"],
@@ -61,7 +62,7 @@ describe("trusted-publisher CLI", () => {
     });
 
     expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toMatch(/^0\.1\.0\n$/);
+    expect(stdout.toString()).toBe(`${version}\n`);
   });
 
   it("applies when npm_config_yes is true", async () => {

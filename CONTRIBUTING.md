@@ -29,8 +29,9 @@ will fail fast.
 └── tsconfig.base.json            # shared strict TypeScript config
 ```
 
-Dependencies are pinned through the pnpm **catalog** in `pnpm-workspace.yaml`; reference them as
-`"catalog:"` in `package.json` rather than hard-coding versions.
+Development dependencies in the private root workspace are pinned through the pnpm **catalog** in
+`pnpm-workspace.yaml`. The published package manifest must use concrete npm-compatible versions so
+`npx trusted-publisher` can install it with npm.
 
 ## Common scripts
 
