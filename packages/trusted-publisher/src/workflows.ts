@@ -371,9 +371,20 @@ function createReusableCandidate(
   });
 }
 
-function candidatesFromCommand(command: string, context: StepContext): PublishCandidate[] {
+function candidatesFromCommand(
+  command: string,
+  context: StepContext,
+  scriptDepth = 0,
+): PublishCandidate[] {
   const candidates: PublishCandidate[] = [];
   const normalized = command.replace(/\\\r?\n/g, " ").replace(/\s+/g, " ");
+  const packageScript = resolvePackageScript(normalized, context);
+
+  if (packageScript !== undefined) {
+    return packageScript && scriptDepth < 5
+      ? candidatesFromCommand(packageScript, context, scriptDepth + 1)
+      : [];
+  }
 
   if (/\bnpm\s+stage\s+publish\b/.test(normalized)) {
     candidates.push(
@@ -480,6 +491,26 @@ function candidatesFromCommand(command: string, context: StepContext): PublishCa
   }
 
   return candidates;
+}
+
+function resolvePackageScript(command: string, context: StepContext): string | null | undefined {
+  const invocation = /^(?:corepack\s+)?(?:npm|pnpm|yarn)\s+run(?:-script)?\s+([^\s]+)/.exec(
+    command,
+  );
+  const rawScriptName = invocation?.[1];
+  if (!rawScriptName) {
+    return undefined;
+  }
+
+  const scriptName = rawScriptName.replace(/^(?:"|')|(?:"|')$/g, "");
+  const manifestPath = join(context.rootDir, context.workingDirectory ?? ".", "package.json");
+
+  try {
+    const manifest = asObject(JSON.parse(readFileSync(manifestPath, "utf8")));
+    return readString(asObject(manifest?.scripts)?.[scriptName]) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function makeCommandCandidate(options: {

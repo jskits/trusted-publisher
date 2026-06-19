@@ -78,6 +78,59 @@ describe("GitHub workflow analysis", () => {
     expect(workflow?.candidates.every((candidate) => candidate.hasIdTokenWrite)).toBe(true);
   });
 
+  it("expands package manager scripts before inferring publish selectors", () => {
+    const rootDir = createWorkflowFixture({
+      "publish.yml": [
+        "name: Publish",
+        "jobs:",
+        "  publish:",
+        "    runs-on: ubuntu-latest",
+        "    permissions:",
+        "      id-token: write",
+        "    steps:",
+        "      - run: pnpm run publish -- --provenance",
+      ].join("\n"),
+    });
+    writeFileSync(
+      join(rootDir, "package.json"),
+      JSON.stringify({
+        scripts: {
+          publish: "pnpm -r --filter './packages/*' publish --access=public",
+        },
+      }),
+    );
+
+    const [workflow] = discoverGitHubWorkflows(rootDir);
+
+    expect(workflow?.candidates).toHaveLength(1);
+    expect(workflow?.candidates[0]).toMatchObject({
+      command: "pnpm -r --filter './packages/*' publish --access=public",
+      packageSelector: { kind: "all" },
+      tool: "pnpm",
+    });
+  });
+
+  it("does not treat a non-publishing package script as a publish candidate", () => {
+    const rootDir = createWorkflowFixture({
+      "publish.yml": [
+        "name: Publish",
+        "jobs:",
+        "  publish:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: pnpm run publish",
+      ].join("\n"),
+    });
+    writeFileSync(
+      join(rootDir, "package.json"),
+      JSON.stringify({ scripts: { publish: "echo release is disabled" } }),
+    );
+
+    const [workflow] = discoverGitHubWorkflows(rootDir);
+
+    expect(workflow?.candidates).toEqual([]);
+  });
+
   it("detects local and external reusable workflow references", () => {
     const rootDir = createWorkflowFixture({
       "delegate.yml": [
