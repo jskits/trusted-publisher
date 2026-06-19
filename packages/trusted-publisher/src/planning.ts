@@ -86,6 +86,7 @@ function buildPackagePlan(
 
   const trustArgs =
     pkg.name &&
+    pkg.publishable &&
     repository &&
     workflowFile &&
     (permissions.allowPublish || permissions.allowStagePublish)

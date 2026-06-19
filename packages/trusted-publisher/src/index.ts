@@ -5,11 +5,15 @@ import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import pc from "picocolors";
 
+import { applyTrustedPublisherPlans, type ApplyResult } from "./apply.js";
 import { discoverWorkspace } from "./discovery.js";
+import { createNpmCliClient } from "./npm.js";
 import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
 
+export { applyTrustedPublisherPlans, checkTrustedPublisherPlans } from "./apply.js";
 export { discoverWorkspace } from "./discovery.js";
 export { discoverRepository, findRepoRoot, parseGitHubRepository } from "./git.js";
+export { createNpmCliClient, parseTrustList, trustMatchesPlan } from "./npm.js";
 export { discoverPackages, readWorkspacePatterns } from "./packages.js";
 export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
 export { discoverGitHubWorkflows } from "./workflows.js";
@@ -56,11 +60,14 @@ export function createProgram(io: CliIo = defaultIo): Command {
     .option("--dry-run", "print the planned npm trust commands without changing npm")
     .option("--repo <owner/repo>", "override the detected GitHub repository")
     .option("--workflow <file>", "override the detected GitHub Actions workflow filename")
+    .option("--registry <url>", "use a custom npm registry for npm package and trust checks")
+    .option("--replace", "revoke differing trusted publisher records before recreating them")
+    .option("--delay-ms <number>", "delay between npm trust mutations", parseInteger, 2000)
     .option("-y, --yes", "skip confirmation prompts for high-confidence changes")
     .option("--publish-only", "allow npm publish only")
     .option("--stage-only", "allow npm stage publish only")
     .option("--both", "allow npm publish and npm stage publish")
-    .action((options: CliOptions) => {
+    .action(async (options: CliOptions) => {
       const permissionMode = resolvePermissionMode(options);
       const discovery = discoverWorkspace();
       const planningOptions: {
@@ -103,7 +110,32 @@ export function createProgram(io: CliIo = defaultIo): Command {
 
       if (options.dryRun) {
         io.stdout.write("\nDry run: no npm changes will be made.\n");
+        return;
       }
+
+      if (!shouldApply(options)) {
+        io.stdout.write("\nNo npm changes made. Use --yes to apply high-confidence plans.\n");
+        return;
+      }
+
+      const clientOptions: { registry?: string } = {};
+      if (options.registry) {
+        clientOptions.registry = options.registry;
+      }
+
+      const applyOptions: { delayMs: number; replace?: boolean } = {
+        delayMs: options.delayMs,
+      };
+      if (options.replace) {
+        applyOptions.replace = true;
+      }
+
+      const results = await applyTrustedPublisherPlans(
+        plans,
+        createNpmCliClient(clientOptions),
+        applyOptions,
+      );
+      printApplySummary(results, io);
     });
 
   return program;
@@ -111,8 +143,11 @@ export function createProgram(io: CliIo = defaultIo): Command {
 
 interface CliOptions {
   readonly both?: boolean;
+  readonly delayMs: number;
   readonly dryRun?: boolean;
   readonly publishOnly?: boolean;
+  readonly registry?: string;
+  readonly replace?: boolean;
   readonly repo?: string;
   readonly stageOnly?: boolean;
   readonly workflow?: string;
@@ -138,6 +173,33 @@ function resolvePermissionMode(options: CliOptions): PermissionMode {
   }
 
   return "infer";
+}
+
+function shouldApply(options: CliOptions): boolean {
+  return Boolean(options.yes) || process.env.npm_config_yes === "true";
+}
+
+function parseInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed.toString() !== value) {
+    throw new Error("Expected a non-negative integer.");
+  }
+
+  return parsed;
+}
+
+function printApplySummary(results: readonly ApplyResult[], io: CliIo): void {
+  io.stdout.write("\nApply summary:\n");
+
+  for (const result of results) {
+    const name =
+      result.checkedPlan.plan.package.name ?? result.checkedPlan.plan.package.relativePath;
+    io.stdout.write(`  ${result.status}: ${name}\n`);
+
+    for (const reason of result.checkedPlan.reasons) {
+      io.stdout.write(`    reason: ${reason}\n`);
+    }
+  }
 }
 
 export async function runCli(options: RunCliOptions = {}): Promise<void> {
