@@ -21,6 +21,8 @@ const privatePackage = {
 };
 
 const releaseWorkflow = {
+  candidates: [],
+  evidence: [],
   fileName: "release.yml",
   path: "/repo/.github/workflows/release.yml",
   relativePath: ".github/workflows/release.yml",
@@ -33,6 +35,7 @@ const releaseWorkflow = {
     npmStagePublish: false,
     nxReleasePublish: false,
     packageManagerPublish: false,
+    reusableWorkflow: false,
     semanticRelease: false,
   },
 };

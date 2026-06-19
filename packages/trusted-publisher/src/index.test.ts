@@ -207,6 +207,8 @@ function createDiscovery(): WorkspaceDiscovery {
     },
     workflows: [
       {
+        candidates: [],
+        evidence: [],
         fileName: "release.yml",
         path: "/repo/.github/workflows/release.yml",
         relativePath: ".github/workflows/release.yml",
@@ -219,6 +221,7 @@ function createDiscovery(): WorkspaceDiscovery {
           npmStagePublish: false,
           nxReleasePublish: false,
           packageManagerPublish: false,
+          reusableWorkflow: false,
           semanticRelease: false,
         },
       },
