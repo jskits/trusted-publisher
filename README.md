@@ -1,5 +1,9 @@
 # trusted-publisher
 
+[![CI](https://github.com/jskits/trusted-publisher/actions/workflows/ci.yml/badge.svg)](https://github.com/jskits/trusted-publisher/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/trusted-publisher.svg)](https://www.npmjs.com/package/trusted-publisher)
+![license](https://img.shields.io/npm/l/trusted-publisher)
+
 Plan, audit, and safely apply [npm trusted publisher](https://docs.npmjs.com/trusted-publishers)
 configuration for GitHub packages and monorepos.
 
