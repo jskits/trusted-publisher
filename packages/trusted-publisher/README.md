@@ -13,6 +13,22 @@ high-confidence changes.
 It is designed for ordinary packages and monorepos where npm's native `npm trust` command is the
 source of truth, but workspace discovery and workflow selection should be automated.
 
+## How it works
+
+Each run is a read-only analysis pipeline followed by an optional, authorized mutation step:
+
+1. **Discover** the GitHub `owner/repo` (from git), the publishable packages, and the publishing
+   workflows.
+2. **Map** packages to publish candidates (the publish _topology_).
+3. **Plan & score** each package: pick a workflow, infer permissions and environment, render the
+   `npm trust github` command, and assign a confidence tier.
+4. **Check** each plan against live npm state (already configured / create / replace / blocked).
+5. **Apply** high-confidence plans serially and throttled, only when authorized.
+
+For the full design see [docs/architecture.md](../../docs/architecture.md),
+[docs/detection.md](../../docs/detection.md), and
+[docs/confidence-and-topology.md](../../docs/confidence-and-topology.md).
+
 ## Usage
 
 ```sh
@@ -46,7 +62,26 @@ Publishing workflow analysis supports:
 - Reusable workflows, reported conservatively for manual review when the publish target is unclear.
 
 For each package, the planner selects the best publish workflow candidate, assigns a confidence
-score, and explains the evidence used for the decision.
+score, and explains the evidence used for the decision. The exact detection rules (selectors,
+matrix expansion, permissions, and evidence) are documented in
+[docs/detection.md](../../docs/detection.md).
+
+## Confidence Model
+
+Every package gets a plan with a `score` (0–100), a `confidence` tier, and `explain`/`reasons`
+trails:
+
+| Confidence | Score | Auto-applied with `--yes` / `npx -y`? |
+| ---------- | ----- | ------------------------------------- |
+| `high`     | ≥ 85  | yes                                   |
+| `medium`   | 50–84 | no — printed with reasons             |
+| `low`      | < 50  | no — printed with reasons             |
+
+A `high` plan needs a publishable named package, a resolved GitHub repository, a selected workflow
+with a direct publish command, `id-token: write` present, an inferred permission, and no outstanding
+reasons. Ambiguous or indirect setups (reusable workflows, multiple publishers, missing OIDC
+permission) land in `medium`/`low` for review. The full scoring rules and the publish-topology
+classification are in [docs/confidence-and-topology.md](../../docs/confidence-and-topology.md).
 
 ## Local Repository Flow
 
@@ -179,7 +214,8 @@ trusted-publisher --audit --json
 ```
 
 The JSON report includes discovered packages and workflows, planned commands, confidence scores,
-check results, claim plans, apply results, and a numeric summary.
+check results, claim plans, apply results, and a numeric summary. The full schema is documented in
+[docs/json-report.md](../../docs/json-report.md).
 
 Use a Markdown migration report when handing a migration plan to humans:
 
@@ -220,8 +256,8 @@ stdout.
 | `--report <path>`     | Write a markdown migration report to a path, or `-` for stdout.          |
 | `--claim`             | Publish placeholder packages for missing npm package names.              |
 | `--scope <scope>`     | Configure public packages in an npm scope, such as `@acme`.              |
-| `--scope-limit <n>`   | Maximum packages to load from npm scope search.                          |
-| `--yes`               | Apply high-confidence changes without prompting.                         |
+| `--scope-limit <n>`   | Maximum packages to load from npm scope search (default `250`).          |
+| `--yes`, `-y`         | Apply high-confidence changes without prompting.                         |
 | `--replace`           | Revoke differing trusted publisher records before recreating them.       |
 | `--repo <owner/repo>` | Override the GitHub repository passed to `npm trust`.                    |
 | `--workflow <file>`   | Override the detected workflow filename, such as `release.yml`.          |
@@ -229,7 +265,39 @@ stdout.
 | `--stage-only`        | Configure `--allow-stage-publish` only.                                  |
 | `--both`              | Configure both publish and stage publish permissions.                    |
 | `--registry <url>`    | Use a custom npm registry for package and trust checks.                  |
-| `--delay-ms <number>` | Override the delay between npm trust mutations.                          |
+| `--delay-ms <number>` | Override the delay between npm trust mutations (default `2000`).         |
+| `--version`, `-V`     | Print the version.                                                       |
+| `--help`, `-h`        | Print help.                                                              |
+
+`--publish-only`, `--stage-only`, and `--both` are mutually exclusive.
+
+## Programmatic API
+
+The package is published as a typed ESM library as well as a CLI, so the discovery, planning,
+checking, and applying steps can be embedded:
+
+```ts
+import {
+  discoverWorkspace,
+  buildTrustedPublisherPlans,
+  checkTrustedPublisherPlans,
+  applyCheckedTrustedPublisherPlans,
+  createNpmCliClient,
+} from "trusted-publisher";
+
+const discovery = discoverWorkspace();
+const plans = buildTrustedPublisherPlans(discovery);
+const client = createNpmCliClient();
+
+const checked = await checkTrustedPublisherPlans(plans, client);
+const results = await applyCheckedTrustedPublisherPlans(
+  checked.filter((c) => c.plan.confidence === "high"),
+  client,
+);
+```
+
+The full export list and the injectable `NpmClient` interface are documented in
+[docs/api.md](../../docs/api.md).
 
 ## Requirements
 
@@ -238,6 +306,9 @@ stdout.
 - Existing packages on npm by default. Use `--claim` to publish minimal placeholder packages for
   missing names before configuring trusted publishing.
 - GitHub Actions workflows under `.github/workflows/`.
+
+Node.js and npm versions are validated before any mutation; an unsupported npm CLI is reported and
+the run stops before touching the registry.
 
 The generated command shape follows npm's trusted publishing CLI:
 
