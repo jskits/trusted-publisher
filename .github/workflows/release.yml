@@ -2,37 +2,96 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*.*.*"
+      - "trusted-publisher@*"
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
+  publish:
+    name: Publish trusted-publisher to npm
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # If the npm trusted publisher was configured with an environment name,
+    # uncomment the next line and make it exactly match npm's environment value.
+    # environment: npm
+
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      - run: npm install --global npm@latest
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
-      - name: Create release pull request or publish
-        uses: changesets/action@v1
-        with:
-          version: pnpm changeset:version
-          publish: pnpm release
+
+      - name: Upgrade npm
+        run: npm install --global npm@latest
+
+      - name: Print tool versions
+        run: |
+          node --version
+          npm --version
+          pnpm --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_name="$(node -p "require('./packages/trusted-publisher/package.json').name")"
+          package_version="$(node -p "require('./packages/trusted-publisher/package.json').version")"
+          tag_name="${GITHUB_REF_NAME}"
+
+          case "${tag_name}" in
+            "v${package_version}"|"${package_name}@${package_version}")
+              echo "Tag ${tag_name} matches ${package_name}@${package_version}."
+              ;;
+            *)
+              echo "::error::Tag ${tag_name} does not match ${package_name}@${package_version}."
+              echo "::error::Use v${package_version} or ${package_name}@${package_version}."
+              exit 1
+              ;;
+          esac
+
+      - name: Check package is not already published
+        id: npm-version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_name="$(node -p "require('./packages/trusted-publisher/package.json').name")"
+          package_version="$(node -p "require('./packages/trusted-publisher/package.json').version")"
+
+          if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "${package_name}@${package_version} is already published; skipping npm publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run checks
+        if: steps.npm-version.outputs.published != 'true'
+        run: pnpm check
+
+      - name: Publish to npm with trusted publishing
+        if: steps.npm-version.outputs.published != 'true'
+        working-directory: packages/trusted-publisher
+        run: npm publish --access public --provenance
