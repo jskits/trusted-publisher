@@ -40,6 +40,13 @@ describe("trusted publisher apply flow", () => {
     expect(blocked?.reasons).toContain(
       "existing trusted publisher differs; rerun with --replace to revoke and recreate",
     );
+    expect(blocked?.trustDiffs[0]?.fields).toEqual([
+      {
+        current: "owner/other",
+        field: "repository",
+        suggested: "owner/repo",
+      },
+    ]);
     expect(replacement?.action).toBe("replace");
   });
 

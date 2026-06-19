@@ -1,6 +1,7 @@
 import type { ExistingTrust, NpmClient } from "./npm.js";
 import { trustMatchesPlan } from "./npm.js";
 import type { TrustedPublisherPlan } from "./planning.js";
+import { compareTrustToPlan, type TrustConfigurationDiff } from "./trust-diff.js";
 
 export type CheckedPlanAction = "blocked" | "create" | "replace" | "skip";
 export type ApplyStatus = "blocked" | "created" | "dry-run" | "failed" | "replaced" | "skipped";
@@ -21,6 +22,7 @@ export interface CheckedPlan {
   readonly packageExists: boolean;
   readonly plan: TrustedPublisherPlan;
   readonly reasons: readonly string[];
+  readonly trustDiffs: readonly TrustConfigurationDiff[];
 }
 
 export interface ApplyResult {
@@ -122,12 +124,20 @@ async function checkTrustedPublisherPlan(
 
   const existingTrusts = await client.listTrust(packageName);
   const matchingTrust = existingTrusts.find((trust) => trustMatchesPlan(trust, plan));
+  const trustDiffs = existingTrusts
+    .map((trust) => compareTrustToPlan(trust, plan))
+    .filter((diff) => diff.fields.length > 0);
 
   if (matchingTrust) {
-    return makeCheckedPlan(plan, true, existingTrusts, matchingTrust, "skip", [
-      ...reasons,
-      "trusted publisher already configured",
-    ]);
+    return makeCheckedPlan(
+      plan,
+      true,
+      existingTrusts,
+      matchingTrust,
+      "skip",
+      [...reasons, "trusted publisher already configured"],
+      trustDiffs,
+    );
   }
 
   if (existingTrusts.length === 0) {
@@ -135,20 +145,33 @@ async function checkTrustedPublisherPlan(
   }
 
   if (!options.replace) {
-    return makeCheckedPlan(plan, true, existingTrusts, undefined, "blocked", [
-      ...reasons,
-      "existing trusted publisher differs; rerun with --replace to revoke and recreate",
-    ]);
+    return makeCheckedPlan(
+      plan,
+      true,
+      existingTrusts,
+      undefined,
+      "blocked",
+      [
+        ...reasons,
+        "existing trusted publisher differs; rerun with --replace to revoke and recreate",
+      ],
+      trustDiffs,
+    );
   }
 
   if (existingTrusts.some((trust) => !trust.id)) {
-    return makeCheckedPlan(plan, true, existingTrusts, undefined, "blocked", [
-      ...reasons,
-      "existing trusted publisher id is missing",
-    ]);
+    return makeCheckedPlan(
+      plan,
+      true,
+      existingTrusts,
+      undefined,
+      "blocked",
+      [...reasons, "existing trusted publisher id is missing"],
+      trustDiffs,
+    );
   }
 
-  return makeCheckedPlan(plan, true, existingTrusts, undefined, "replace", reasons);
+  return makeCheckedPlan(plan, true, existingTrusts, undefined, "replace", reasons, trustDiffs);
 }
 
 async function applyCheckedPlan(
@@ -209,6 +232,7 @@ function makeCheckedPlan(
   matchingTrust: ExistingTrust | undefined,
   action: CheckedPlanAction,
   reasons: readonly string[],
+  trustDiffs: readonly TrustConfigurationDiff[] = [],
 ): CheckedPlan {
   const result: {
     action: CheckedPlanAction;
@@ -217,12 +241,14 @@ function makeCheckedPlan(
     packageExists: boolean;
     plan: TrustedPublisherPlan;
     reasons: readonly string[];
+    trustDiffs: readonly TrustConfigurationDiff[];
   } = {
     action,
     existingTrusts,
     packageExists,
     plan,
     reasons,
+    trustDiffs,
   };
 
   if (matchingTrust) {

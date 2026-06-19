@@ -16,6 +16,7 @@ import { discoverWorkspace, type WorkspaceDiscovery } from "./discovery.js";
 import { createNpmCliClient, type NpmClient, type NpmClientOptions } from "./npm.js";
 import { buildTrustedPublisherPlans, type PermissionMode } from "./planning.js";
 import { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
+import { formatTrustFieldDiff } from "./trust-diff.js";
 
 export {
   applyCheckedTrustedPublisherPlans,
@@ -29,6 +30,7 @@ export { discoverPackages, readWorkspacePatterns } from "./packages.js";
 export { buildTrustedPublisherPlans, renderNpmTrustCommand } from "./planning.js";
 export { checkRuntimePrerequisites, formatRuntimePrerequisiteIssues } from "./prerequisites.js";
 export { resolvePublishTopology } from "./topology.js";
+export { compareTrustToPlan, formatTrustFieldDiff } from "./trust-diff.js";
 export { discoverGitHubWorkflows } from "./workflows.js";
 
 export interface CliIo {
@@ -254,6 +256,12 @@ function printNpmCheckSummary(checkedPlans: readonly CheckedPlan[], io: CliIo): 
 
     for (const reason of checkedPlan.reasons) {
       io.stdout.write(`    reason: ${reason}\n`);
+    }
+    for (const trustDiff of checkedPlan.trustDiffs) {
+      const id = trustDiff.trust.id ?? "<unknown>";
+      for (const fieldDiff of trustDiff.fields) {
+        io.stdout.write(`    diff(${id}): ${formatTrustFieldDiff(fieldDiff)}\n`);
+      }
     }
   }
 }
