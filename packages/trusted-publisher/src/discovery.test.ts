@@ -35,7 +35,7 @@ describe("workspace discovery", () => {
     ]);
     expect(discovery.workflows).toHaveLength(2);
     expect(discovery.workflows[0]?.signals).toMatchObject({
-      changesetsAction: true,
+      changesetsAction: false,
       hasIdTokenWrite: true,
       npmPublish: true,
     });

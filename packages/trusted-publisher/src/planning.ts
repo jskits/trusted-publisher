@@ -155,7 +155,11 @@ function selectPackageWorkflow(
   }
 
   if (!mapping.selectedCandidate) {
-    if (!workflows.some((workflow) => workflow.candidates.length > 0)) {
+    const mappableCandidates = workflows
+      .flatMap((workflow) => workflow.candidates)
+      .filter((candidate) => candidate.packageSelector.kind !== "unknown");
+
+    if (mappableCandidates.length === 0) {
       return selectWorkflow(workflows, undefined);
     }
 

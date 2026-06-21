@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join, relative, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { parse as parseYaml } from "yaml";
 
@@ -106,6 +106,11 @@ interface StepContext extends JobContext {
   readonly workingDirectory?: string;
 }
 
+interface LocalScript {
+  readonly path: string;
+  readonly source: string;
+}
+
 interface MatrixValue {
   readonly key: string;
   readonly value: string;
@@ -123,6 +128,15 @@ const packageMatrixKeys = new Set([
   "workspace",
   "workspacePath",
   "workspace_path",
+]);
+const nodeOptionsWithValue = new Set([
+  "--conditions",
+  "--experimental-loader",
+  "--import",
+  "--loader",
+  "--require",
+  "-C",
+  "-r",
 ]);
 
 export function discoverGitHubWorkflows(rootDir: string): WorkflowInfo[] {
@@ -248,10 +262,7 @@ function collectPublishCandidates(
 
       const uses = readString(step.uses);
       if (uses) {
-        const actionCandidate = candidateFromUses(uses, step, stepContext);
-        if (actionCandidate) {
-          candidates.push(actionCandidate);
-        }
+        candidates.push(...candidatesFromUses(uses, step, stepContext));
       }
 
       const command = readString(step.run);
@@ -323,34 +334,43 @@ function buildWorkflowSignals(
   };
 }
 
-function candidateFromUses(
+function candidatesFromUses(
   uses: string,
   step: JsonObject,
   context: StepContext,
-): PublishCandidate | undefined {
+): PublishCandidate[] {
   if (/changesets\/action/i.test(uses)) {
-    return makeCandidate({
-      context,
-      evidenceCode: "workflow.publish.changesets_action",
-      kind: "changesets",
-      message: `${context.fileName} uses changesets/action in ${formatStep(context)}.`,
-      packageSelector: { kind: "all" },
-      scoreDelta: 8,
-      tool: "changesets",
-      uses,
-    });
+    const publishInput = readString(asObject(step.with)?.publish);
+    if (!publishInput) {
+      return [];
+    }
+
+    const publishCandidates = candidatesFromCommand(publishInput, context);
+    if (publishCandidates.length > 0) {
+      return publishCandidates;
+    }
+
+    return [
+      makeCandidate({
+        command: publishInput,
+        context,
+        evidenceCode: "workflow.publish.changesets_action",
+        kind: "changesets",
+        message: `${context.fileName} uses changesets/action publish input in ${formatStep(context)}.`,
+        packageSelector: { kind: "all" },
+        scoreDelta: 8,
+        tool: "changesets",
+        uses,
+      }),
+    ];
   }
 
   if (isReusableWorkflowReference(uses)) {
-    return createReusableCandidate(uses, context);
+    return [createReusableCandidate(uses, context)];
   }
 
   const publishInput = readString(asObject(step.with)?.publish);
-  if (publishInput) {
-    return candidatesFromCommand(publishInput, context)[0];
-  }
-
-  return undefined;
+  return publishInput ? candidatesFromCommand(publishInput, context) : [];
 }
 
 function createReusableCandidate(
@@ -383,6 +403,13 @@ function candidatesFromCommand(
   if (packageScript !== undefined) {
     return packageScript && scriptDepth < 5
       ? candidatesFromCommand(packageScript, context, scriptDepth + 1)
+      : [];
+  }
+
+  const localScript = resolveLocalScript(normalized, context);
+  if (localScript !== undefined) {
+    return localScript && scriptDepth < 5
+      ? candidatesFromLocalScript(command, localScript, context)
       : [];
   }
 
@@ -511,6 +538,159 @@ function resolvePackageScript(command: string, context: StepContext): string | n
   } catch {
     return null;
   }
+}
+
+function resolveLocalScript(command: string, context: StepContext): LocalScript | null | undefined {
+  const scriptReference = readLocalScriptReference(command);
+  if (!scriptReference) {
+    return undefined;
+  }
+
+  if (isAbsolute(scriptReference)) {
+    return null;
+  }
+
+  const scriptPath = resolve(context.rootDir, context.workingDirectory ?? ".", scriptReference);
+  const relativeScriptPath = relative(context.rootDir, scriptPath);
+  if (relativeScriptPath.startsWith("..") || isAbsolute(relativeScriptPath)) {
+    return null;
+  }
+
+  try {
+    return {
+      path: relativeScriptPath.split(sep).join("/"),
+      source: readFileSync(scriptPath, "utf8"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function candidatesFromLocalScript(
+  command: string,
+  script: LocalScript,
+  context: StepContext,
+): PublishCandidate[] {
+  const searchableSource = script.source.replace(/[^\w@./:-]+/g, " ");
+  const candidates: PublishCandidate[] = [];
+
+  if (/\bnpm\s+stage\s+publish\b/.test(searchableSource)) {
+    candidates.push(
+      makeCommandCandidate({
+        command: `npm stage publish (via ${command})`,
+        context,
+        evidenceCode: "workflow.publish.npm_stage",
+        message: `${context.fileName} runs npm stage publish through ${script.path} in ${formatStep(context)}.`,
+        packageSelector: inferPackageSelector(searchableSource, context.workingDirectory),
+        scoreDelta: 18,
+        tool: "npm",
+      }),
+    );
+  }
+
+  if (/\bnpm\s+publish\b/.test(searchableSource)) {
+    candidates.push(
+      makeCommandCandidate({
+        command: `npm publish (via ${command})`,
+        context,
+        evidenceCode: "workflow.publish.npm",
+        message: `${context.fileName} runs npm publish through ${script.path} in ${formatStep(context)}.`,
+        packageSelector: inferPackageSelector(searchableSource, context.workingDirectory),
+        scoreDelta: 20,
+        tool: "npm",
+      }),
+    );
+  }
+
+  if (/\bpnpm\b/.test(searchableSource) && /\bpublish\b/.test(searchableSource)) {
+    candidates.push(
+      makeCommandCandidate({
+        command: `pnpm publish (via ${command})`,
+        context,
+        evidenceCode: "workflow.publish.pnpm",
+        message: `${context.fileName} runs pnpm publish through ${script.path} in ${formatStep(context)}.`,
+        packageSelector: inferPnpmSelector(searchableSource, context.workingDirectory),
+        scoreDelta: 16,
+        tool: "pnpm",
+      }),
+    );
+  }
+
+  if (
+    /\byarn\b/.test(searchableSource) &&
+    /\b(?:npm\s+publish|workspaces\s+foreach)\b/.test(searchableSource)
+  ) {
+    candidates.push(
+      makeCommandCandidate({
+        command: `yarn npm publish (via ${command})`,
+        context,
+        evidenceCode: "workflow.publish.yarn",
+        message: `${context.fileName} runs yarn npm publish through ${script.path} in ${formatStep(context)}.`,
+        packageSelector: inferYarnSelector(searchableSource, context.workingDirectory),
+        scoreDelta: 16,
+        tool: "yarn",
+      }),
+    );
+  }
+
+  return candidates;
+}
+
+function readLocalScriptReference(command: string): string | undefined {
+  const tokens = splitCommand(command);
+  let index = 0;
+
+  while (tokens[index] && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index] ?? "")) {
+    index += 1;
+  }
+
+  const executable = basename(tokens[index] ?? "");
+  if (!["bun", "node", "tsx"].includes(executable)) {
+    return undefined;
+  }
+
+  for (let tokenIndex = index + 1; tokenIndex < tokens.length; tokenIndex += 1) {
+    const token = tokens[tokenIndex];
+    if (!token) {
+      continue;
+    }
+
+    if (token === "--") {
+      continue;
+    }
+
+    if (token === "-e" || token === "--eval" || token === "-p" || token === "--print") {
+      return undefined;
+    }
+
+    if (nodeOptionsWithValue.has(token)) {
+      tokenIndex += 1;
+      continue;
+    }
+
+    if (token.startsWith("-")) {
+      continue;
+    }
+
+    return /\.(?:cjs|cts|js|mjs|mts|ts)$/i.test(token) ? token : undefined;
+  }
+
+  return undefined;
+}
+
+function splitCommand(command: string): string[] {
+  const tokens: string[] = [];
+  const pattern = /"([^"]*)"|'([^']*)'|`([^`]*)`|(\S+)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(command)) !== null) {
+    const token = match[1] ?? match[2] ?? match[3] ?? match[4];
+    if (token) {
+      tokens.push(token);
+    }
+  }
+
+  return tokens;
 }
 
 function makeCommandCandidate(options: {

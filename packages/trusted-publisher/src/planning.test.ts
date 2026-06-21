@@ -122,6 +122,37 @@ describe("trusted publisher planning", () => {
     expect(plans[0]?.command).toBeUndefined();
   });
 
+  it("falls back to the workflow when direct publish candidates have unknown package targets", () => {
+    const plans = buildTrustedPublisherPlans({
+      ...createDiscovery([publishablePackage]),
+      workflows: [
+        {
+          ...releaseWorkflow,
+          candidates: [
+            {
+              evidence: [],
+              hasIdTokenWrite: true,
+              jobId: "publish",
+              kind: "direct",
+              packageSelector: { kind: "unknown" },
+              permissionsSource: "workflow",
+              tool: "npm",
+              workflowFile: "release.yml",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(plans[0]).toMatchObject({
+      confidence: "high",
+      score: 95,
+      workflowFile: "release.yml",
+    });
+    expect(plans[0]?.reasons).toEqual([]);
+    expect(plans[0]?.publishCandidate).toBeUndefined();
+  });
+
   it("renders shell-safe commands", () => {
     expect(
       renderNpmTrustCommand([

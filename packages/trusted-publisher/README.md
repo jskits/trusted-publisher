@@ -60,7 +60,8 @@ Publishing workflow analysis supports:
 - Direct `npm publish` and `npm stage publish`.
 - pnpm publish commands, including recursive and filtered publishes.
 - Yarn npm publish commands and workspace foreach publishes.
-- Changesets, semantic-release, Lerna publish, and Nx release publish.
+- Changesets publish inputs, semantic-release, Lerna publish, and Nx release publish.
+- Local `node`/`bun`/`tsx` scripts that contain npm/pnpm/yarn publish commands.
 - Matrix jobs that publish one package per matrix value.
 - Reusable workflows, reported conservatively for manual review when the publish target is unclear.
 

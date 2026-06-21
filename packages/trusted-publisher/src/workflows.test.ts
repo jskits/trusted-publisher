@@ -19,6 +19,8 @@ describe("GitHub workflow analysis", () => {
         "    steps:",
         "      - uses: actions/checkout@v6",
         "      - uses: changesets/action@v1",
+        "        with:",
+        "          publish: changeset publish",
         "      - run: pnpm -r publish --access public",
         "      - run: yarn workspaces foreach npm publish",
         "      - run: npx semantic-release",
@@ -154,6 +156,63 @@ describe("GitHub workflow analysis", () => {
       "unknown",
       "unknown",
     ]);
+  });
+
+  it("does not treat version-only changesets/action usage as publishing", () => {
+    const rootDir = createWorkflowFixture({
+      "version.yml": [
+        "name: Version",
+        "jobs:",
+        "  version:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: changesets/action@v1",
+        "        with:",
+        "          version: pnpm run version-packages",
+      ].join("\n"),
+    });
+
+    const [workflow] = discoverGitHubWorkflows(rootDir);
+
+    expect(workflow?.signals.changesetsAction).toBe(false);
+    expect(workflow?.candidates).toEqual([]);
+  });
+
+  it("detects npm publish inside local node scripts", () => {
+    const rootDir = createWorkflowFixture({
+      "publish.yml": [
+        "name: Publish",
+        "permissions:",
+        "  id-token: write",
+        "jobs:",
+        "  publish:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: pnpm run publish:packages",
+      ].join("\n"),
+    });
+    mkdirSync(join(rootDir, "scripts"), { recursive: true });
+    writeFileSync(
+      join(rootDir, "package.json"),
+      JSON.stringify({
+        scripts: {
+          "publish:packages": "node scripts/publish-packages.mjs",
+        },
+      }),
+    );
+    writeFileSync(
+      join(rootDir, "scripts", "publish-packages.mjs"),
+      'await run("npm", ["publish", tarball, "--access", "public"]);\n',
+    );
+
+    const [workflow] = discoverGitHubWorkflows(rootDir);
+
+    expect(workflow?.signals.npmPublish).toBe(true);
+    expect(workflow?.candidates[0]).toMatchObject({
+      command: "npm publish (via node scripts/publish-packages.mjs)",
+      packageSelector: { kind: "unknown" },
+      tool: "npm",
+    });
   });
 });
 

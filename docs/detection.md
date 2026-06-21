@@ -75,12 +75,14 @@ candidates**, each tagged with a `tool`, a `kind`, a `packageSelector`, whether 
 | `semantic-release` (or `npx semantic-release`)      | `semantic-release`              | `semantic-release` | unknown                                                                          |
 | `lerna publish`                                     | `lerna`                         | `lerna`            | all                                                                              |
 | `nx release [publish]`                              | `nx`                            | `nx`               | all                                                                              |
-| `changesets/action` (`uses:`)                       | `changesets`                    | `changesets`       | all                                                                              |
+| `changesets/action` with `with.publish:`            | inferred from the publish input | inferred           | inferred from the publish input; unknown inputs fall back to all                 |
 | `with.publish:` input on an action                  | inferred from the input command |                    |                                                                                  |
+| local `node`/`bun`/`tsx` scripts containing publish | inferred from script contents   | direct             | inferred from script contents; often unknown                                     |
 | local `./.github/workflows/x.yml` reusable workflow | `reusable-workflow`             | `reusable`         | unknown (flagged for review)                                                     |
 | external `owner/repo/.github/workflows/x.yml@ref`   | `reusable-workflow`             | `reusable`         | unknown (flagged for review)                                                     |
 
-A `yarn ... npm publish` is intentionally not double-counted as a bare `npm publish`.
+A `changesets/action` step that only versions packages is not treated as publishing. A
+`yarn ... npm publish` is intentionally not double-counted as a bare `npm publish`.
 
 ### Package selectors
 
