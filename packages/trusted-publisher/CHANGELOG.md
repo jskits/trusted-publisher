@@ -1,5 +1,12 @@
 # trusted-publisher
 
+## 0.1.4
+
+### Patch Changes
+
+- Detect local `node`/`bun`/`tsx` publish scripts and avoid treating version-only
+  `changesets/action` workflows as publishing candidates.
+
 ## 0.1.3
 
 ### Patch Changes
